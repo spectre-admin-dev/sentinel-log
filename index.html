@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Sentinel Log</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: field-console — status strip, then entry + patterns side rail beside the sighting log; stacks to one column on phones */
+:root{
+  --bg:#0e1517; --panel:#141d20; --panel-2:#1a2528; --line:#24474a; --line-soft:#1e3134;
+  --fg:#d9e4e2; --muted:#83999a; --accent:#ff8a1f; --accent-ink:#1a0d00;
+  --wifi:#ff6b5e; --ble:#5aa9ff; --ok:#4fd1a1; --warn:#ffc547; --crit:#ff5a5a;
+  --f-display:"Chakra Petch", "Rajdhani", "Segoe UI", sans-serif;
+  --f-body:"IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono:"IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){ :root{
+  --bg:#e9eeed; --panel:#f6f8f8; --panel-2:#eef2f1; --line:#9fbcbb; --line-soft:#cfdcdb;
+  --fg:#152022; --muted:#55696a; --accent:#c45a00; --accent-ink:#fff;
+  --wifi:#c4382c; --ble:#2366b8; --ok:#16805a; --warn:#9a6a00; --crit:#c42b2b; color-scheme:light } }
+
+*{box-sizing:border-box}
+html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:14px;line-height:1.5}
+[hidden]{display:none!important}
+.wrap{max-width:1280px;margin:0 auto;padding-block:20px 40px;
+  padding-left:max(16px, env(safe-area-inset-left,0px));padding-right:max(16px, env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;gap:18px}
+h1,h2{font-family:var(--f-display);margin:0;text-wrap:balance;letter-spacing:.04em;text-transform:uppercase}
+h1{font-size:1.6rem;font-weight:700}
+h2{font-size:.95rem;font-weight:600;color:var(--accent)}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.label{font-family:var(--f-display);font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+
+header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding-bottom:14px}
+header.top p{margin:4px 0 0;color:var(--muted);max-width:60ch}
+.status{display:flex;gap:8px;align-items:center;font-family:var(--f-mono);font-size:.78rem;color:var(--muted);flex-wrap:wrap}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.dot.live{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 25%,transparent)}
+.dot.off{background:var(--crit)}
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1px;background:var(--line-soft);border:1px solid var(--line)}
+.stat{background:var(--panel);padding:12px 14px;display:flex;flex-direction:column;gap:2px}
+.stat .v{font-family:var(--f-mono);font-size:1.45rem;font-variant-numeric:tabular-nums}
+.stat .v.flag{color:var(--accent)}
+
+.grid{display:grid;grid-template-columns:340px minmax(0,1fr);gap:18px;align-items:start}
+@media (max-width:900px){.grid{grid-template-columns:minmax(0,1fr)}}
+.rail{display:flex;flex-direction:column;gap:18px;min-width:0}
+.panel{background:var(--panel);border:1px solid var(--line);padding:14px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.panel-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+
+form{display:flex;flex-direction:column;gap:10px}
+form .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+input,select,textarea{font:inherit;color:var(--fg);background:var(--panel-2);border:1px solid var(--line-soft);padding:7px 9px;border-radius:2px;min-width:0;width:100%}
+input.mono,textarea.mono{font-family:var(--f-mono);font-size:.85rem}
+textarea{resize:vertical;min-height:56px}
+input:focus,select:focus,textarea:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.seg{display:flex;border:1px solid var(--line-soft)}
+.seg label{flex:1;text-align:center;padding:6px;cursor:pointer;font-family:var(--f-display);letter-spacing:.08em;font-size:.8rem;position:relative}
+.seg input{position:absolute;opacity:0;pointer-events:none;width:1px}
+.seg label:has(input:checked){background:var(--panel-2);box-shadow:inset 0 -2px 0 var(--accent);color:var(--accent)}
+.hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+
+button{font-family:var(--f-display);letter-spacing:.08em;text-transform:uppercase;font-size:.8rem;font-weight:600;cursor:pointer;border-radius:2px;padding:8px 12px;border:1px solid var(--line);background:transparent;color:var(--fg)}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button.ghost{border-color:transparent;color:var(--muted);padding:4px 8px}
+button:hover:not(:disabled){filter:brightness(1.1)}
+button:disabled{opacity:.45;cursor:not-allowed}
+.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.msg{font-family:var(--f-mono);font-size:.78rem;min-height:1.2em}
+.msg.err{color:var(--crit)} .msg.ok{color:var(--ok)}
+
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.toolbar input[type=search]{flex:1 1 220px}
+.toolbar select{flex:0 1 170px;width:auto}
+
+.tablebox{overflow-x:auto;border:1px solid var(--line-soft)}
+table{border-collapse:collapse;width:100%;min-width:900px;font-size:.84rem}
+th{font-family:var(--f-display);font-weight:600;font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--panel-2)}
+td{padding:8px 10px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+tr:hover td{background:var(--panel-2)}
+tr.is-hidden td{opacity:.5}
+td.num{text-align:right}
+.kind{font-family:var(--f-mono);font-size:.72rem;padding:1px 6px;border:1px solid currentColor;border-radius:2px}
+.kind.WiFi{color:var(--wifi)} .kind.BLE{color:var(--ble)}
+.cat{display:inline-flex;align-items:center;gap:6px;font-weight:500}
+.cat::before{content:"";width:7px;height:7px;background:var(--cat,var(--muted))}
+.conf{font-family:var(--f-mono);font-size:.72rem;text-transform:uppercase;letter-spacing:.06em}
+.conf.confirmed{color:var(--ok)} .conf.suspected{color:var(--warn)} .conf.unverified{color:var(--muted)}
+.rand{font-family:var(--f-mono);font-size:.68rem;color:var(--warn);margin-left:4px}
+.rep{font-family:var(--f-mono);font-size:.72rem;color:var(--accent);margin-left:4px}
+.sub{color:var(--muted);font-size:.75rem;display:block;overflow-wrap:anywhere}
+.note{color:var(--muted);max-width:28ch}
+.rssi{display:inline-flex;gap:2px;align-items:flex-end;height:12px;margin-left:6px;vertical-align:middle}
+.rssi i{width:3px;background:var(--line-soft)} .rssi i.on{background:var(--accent)}
+
+.empty{padding:28px 18px;text-align:center;color:var(--muted);display:flex;flex-direction:column;gap:6px;align-items:center}
+.empty strong{color:var(--fg);font-family:var(--f-display);letter-spacing:.06em;text-transform:uppercase}
+
+.plist{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none}
+.plist li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;font-size:.84rem}
+.plist .bar{grid-column:1 / -1;height:3px;background:var(--line-soft)}
+.plist .bar span{display:block;height:100%;background:var(--accent)}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line-soft);flex-wrap:wrap}
+.tabs button{border:none;border-bottom:2px solid transparent;padding:6px 8px;color:var(--muted)}
+.tabs button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent)}
+details summary{cursor:pointer;font-family:var(--f-display);letter-spacing:.08em;text-transform:uppercase;font-size:.8rem;color:var(--muted)}
+details[open] summary{color:var(--accent)}
+.hint{font-size:.76rem;color:var(--muted);margin:0}
+footer{border-top:1px solid var(--line-soft);padding-top:12px;display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center}
+@media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Sentinel Detection Log</h1>
+      <p>Private record of WiFi and BLE devices picked up by your Sentinel scanners. <a href="map.html" style="color:var(--accent)">Open the map →</a></p>
+    </div>
+    <div class="status"><span class="dot" id="connDot"></span><span id="connText">Connecting…</span></div>
+  </header>
+
+  <section class="stats" aria-label="Summary">
+    <div class="stat"><span class="label">Sightings</span><span class="v" id="stTotal">0</span></div>
+    <div class="stat"><span class="label">Unique devices</span><span class="v" id="stUnique">0</span></div>
+    <div class="stat"><span class="label">Seen 2+ times</span><span class="v flag" id="stRepeat">0</span></div>
+    <div class="stat"><span class="label">Confirmed IDs</span><span class="v" id="stConfirmed">0</span></div>
+    <div class="stat"><span class="label">Last 24 h</span><span class="v" id="st24">0</span></div>
+  </section>
+
+  <div class="grid">
+    <div class="rail">
+      <section class="panel" aria-labelledby="addH">
+        <div class="panel-head"><h2 id="addH">Log a detection</h2><button type="button" class="ghost" id="nowBtn">Time: now</button></div>
+        <form id="addForm" autocomplete="off">
+          <div class="field">
+            <span class="label">Radio</span>
+            <div class="seg" role="radiogroup" aria-label="Radio">
+              <label><input type="radio" name="kind" id="kWifi" value="WiFi" checked><span>WiFi</span></label>
+              <label><input type="radio" name="kind" id="kBle" value="BLE"><span>BLE</span></label>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field"><label class="label" for="fMac">MAC / BSSID</label><input id="fMac" class="mono" placeholder="AA:BB:CC:11:22:33" required></div>
+            <div class="field"><label class="label" for="fName">SSID / name</label><input id="fName" maxlength="64" placeholder="Flock-4F2A"></div>
+          </div>
+          <div class="row">
+            <div class="field"><label class="label" for="fCat">Category</label><select id="fCat"></select></div>
+            <div class="field"><label class="label" for="fConf">Confidence</label>
+              <select id="fConf"><option value="unverified">Unverified</option><option value="suspected">Suspected</option><option value="confirmed">Confirmed (saw it)</option></select></div>
+          </div>
+          <div class="row">
+            <div class="field"><label class="label" for="fRssi">RSSI dBm</label><input id="fRssi" class="mono" type="number" min="-120" max="0" placeholder="-67"></div>
+            <div class="field"><label class="label" for="fCh">Channel / band</label><input id="fCh" class="mono" maxlength="24" placeholder="6 · 2.4 GHz"></div>
+          </div>
+          <div class="row">
+            <div class="field"><label class="label" for="fVendor">Vendor / mfr data</label><input id="fVendor" maxlength="64" placeholder="Sierra Wireless"></div>
+            <div class="field"><label class="label" for="fSrc">Seen by</label>
+              <select id="fSrc"><option>Web</option><option>CYD</option><option>Tab</option><option>Phone</option><option>Other</option></select></div>
+          </div>
+          <div class="field"><label class="label" for="fLoc">Location</label><input id="fLoc" maxlength="120" placeholder="Main St &amp; 5th Ave, northbound"></div>
+          <div class="row">
+            <div class="field"><label class="label" for="fLat">Lat</label><input id="fLat" class="mono" inputmode="decimal" placeholder="00.000"></div>
+            <div class="field"><label class="label" for="fLng">Lng</label><input id="fLng" class="mono" inputmode="decimal" placeholder="-00.000"></div>
+          </div>
+          <div class="actions"><button type="button" class="ghost" id="geoBtn">Use my location</button><span class="msg" id="geoMsg"></span></div>
+          <div class="field"><label class="label" for="fTime">Seen at</label><input id="fTime" type="datetime-local"></div>
+          <div class="field"><label class="label" for="fNotes">Notes</label><textarea id="fNotes" maxlength="500" placeholder="Pole-mounted, solar panel, faces southbound lane"></textarea></div>
+          <div class="hp" aria-hidden="true"><label for="fWebsite">Website</label><input id="fWebsite" tabindex="-1" autocomplete="off"></div>
+          <p class="hint">Private log: only you and accounts you approve can see it. Coordinates are kept at full precision.</p>
+          <div class="actions">
+            <button type="submit" class="primary" id="addBtn">Save detection</button>
+            <span class="msg" id="addMsg" role="status"></span>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <details id="impDetails">
+          <summary>Import a scan dump</summary>
+          <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
+            <p class="hint">Paste CSV with a header row, or a JSON array, from the Sentinel console or the Tab. Recognized columns: time, type, mac/bssid, name/ssid, rssi, channel, category, vendor, location, lat, lng, source, notes. Up to 200 rows per 10 minutes.</p>
+            <textarea id="impText" class="mono" rows="6" placeholder="time,type,mac,name,rssi,channel,category&#10;2026-10-30T11:40,WiFi,B4:8A:0A:12:34:56,Flock-4F2A,-71,6,Flock"></textarea>
+            <div class="actions"><button type="button" id="impBtn">Import rows</button><span class="msg" id="impMsg" role="status"></span></div>
+          </div>
+        </details>
+      </section>
+
+      <section class="panel" aria-labelledby="patH">
+        <div class="panel-head"><h2 id="patH">Patterns</h2></div>
+        <div class="tabs" role="tablist">
+          <button type="button" role="tab" data-pt="repeat" aria-selected="true">Repeat devices</button>
+          <button type="button" role="tab" data-pt="oui" aria-selected="false">Vendor prefix</button>
+          <button type="button" role="tab" data-pt="cat" aria-selected="false">Category</button>
+          <button type="button" role="tab" data-pt="place" aria-selected="false">Places</button>
+        </div>
+        <ul class="plist" id="patList"></ul>
+        <p class="hint" id="patHint"></p>
+      </section>
+    </div>
+
+    <section class="panel" aria-labelledby="logH">
+      <div class="panel-head">
+        <h2 id="logH">Sightings</h2>
+        <div class="actions"><button type="button" class="ghost" id="copyBtn">Copy as CSV</button><span class="msg" id="copyMsg"></span></div>
+      </div>
+      <div class="toolbar">
+        <input type="search" id="q" placeholder="Search MAC, name, vendor, place, notes" aria-label="Search">
+        <select id="fltKind" aria-label="Radio"><option value="">WiFi + BLE</option><option>WiFi</option><option>BLE</option></select>
+        <select id="fltCat" aria-label="Category"><option value="">All categories</option></select>
+        <select id="fltConf" aria-label="Confidence"><option value="">Any confidence</option><option value="confirmed">Confirmed</option><option value="suspected">Suspected</option><option value="unverified">Unverified</option></select>
+      </div>
+      <div class="tablebox">
+        <table>
+          <thead><tr><th>Seen</th><th>Radio</th><th>MAC / BSSID</th><th>Name</th><th>Category</th><th>Conf.</th><th style="text-align:right">RSSI</th><th>Ch</th><th>Location</th><th>Notes</th><th></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty" id="empty">
+          <strong>No detections logged yet</strong>
+          <span>Log one with the form, or paste a scan dump under Import.</span>
+        </div>
+      </div>
+      <p class="hint" id="countHint"></p>
+    </section>
+  </div>
+
+  <footer>
+    <span class="hint">Showing the latest 1,000 sightings.</span>
+    <div class="actions" id="ownerBox">
+      <span class="msg" id="ownerMsg"></span>
+      <button type="button" class="ghost" id="signOut">Sign out</button>
+    </div>
+  </footer>
+</div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="gate.js"></script>
+<script>
+(function(){
+const CATS = [
+  ["Flock","#ff8a1f"],["ALPR","#ffb21f"],["Axon","#ffd447"],["Police / fleet router","#ff5a5a"],
+  ["IP camera","#e36bff"],["Ring","#5fd0ff"],["Blink","#3fb6d9"],["AirTag","#c9d4d6"],["Tile","#9fe870"],
+  ["SmartTag","#7a9cff"],["Smart glasses","#ff7aa8"],["Drone","#b98cff"],["Skimmer","#ff4f8b"],
+  ["Flipper / hacking tool","#ff3d3d"],["Deauth attack","#ff2a2a"],["iBeacon","#64d6b8"],
+  ["Govee / smart home","#68e0a0"],["Hotspot","#8fb0b2"],["Unknown","#6f8586"]
+];
+const CAT_COLOR = Object.fromEntries(CATS);
+const $ = id => document.getElementById(id);
+let sb = null, all = [], isAdmin = false, patTab = "repeat", pending = null;
+
+for (const [c] of CATS){ $("fCat").add(new Option(c,c)); $("fltCat").add(new Option(c,c)); }
+$("fCat").value = "Unknown";
+
+const pad = n => String(n).padStart(2,"0");
+function localInputNow(){const d=new Date();return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+"T"+pad(d.getHours())+":"+pad(d.getMinutes())}
+$("fTime").value = localInputNow();
+$("nowBtn").onclick = () => { $("fTime").value = localInputNow(); };
+
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function fmtTime(iso){const d=new Date(iso);if(isNaN(d))return "—";return d.toLocaleDateString(undefined,{month:"short",day:"numeric"})+" "+d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"})}
+function bars(r){
+  if (r==null) return "";
+  const n = r>=-55?4:r>=-67?3:r>=-78?2:r>=-90?1:0;
+  return '<span class="rssi" aria-hidden="true">'+[4,7,10,12].map((h,i)=>'<i style="height:'+h+'px" class="'+(i<n?"on":"")+'"></i>').join("")+'</span>';
+}
+const numOrNull = v => { if(v===""||v==null) return null; const n=Number(v); return Number.isFinite(n)?n:null; };
+const clip = (s,n) => { s=String(s??"").trim(); return s ? s.slice(0,n) : null; };
+function matchCat(s){
+  if(!s) return "Unknown";
+  const t=String(s).toLowerCase();
+  const hit = CATS.find(([c])=>c.toLowerCase()===t) || CATS.find(([c])=>c.toLowerCase().split(/[ /]+/).some(w=>w.length>2&&t.includes(w)));
+  return hit?hit[0]:"Unknown";
+}
+// Shape a row for the database; the server normalizes MAC, prefix, randomized flag and GPS rounding.
+function toRow(o){
+  const r = numOrNull(o.rssi);
+  return {
+    ts: o.ts, kind: o.kind==="BLE"?"BLE":"WiFi", mac: String(o.mac||"").trim(),
+    name: clip(o.name,64), category: matchCat(o.category),
+    confidence: ["confirmed","suspected","unverified"].includes(o.confidence)?o.confidence:"unverified",
+    rssi: r==null?null:Math.max(-120,Math.min(0,Math.round(r))), channel: clip(o.channel,24), vendor: clip(o.vendor,64),
+    source: clip(o.source,24), location: clip(o.location,120), lat: numOrNull(o.lat), lng: numOrNull(o.lng), notes: clip(o.notes,500)
+  };
+}
+function friendlyErr(e){
+  const m = (e && (e.message||e.details)) || String(e);
+  if (/rate limit/i.test(m)) return "Too many sightings from you in the last 10 minutes. Try again shortly.";
+  if (/mac must/i.test(m) || /sightings_mac_check/.test(m)) return "The MAC needs 12 hex digits, like AA:BB:CC:11:22:33.";
+  if (/check constraint/i.test(m)) return "One of the values is out of range. Check RSSI (−120 to 0) and coordinates.";
+  return m;
+}
+
+// ---------- render ----------
+function filtered(){
+  const q=$("q").value.trim().toLowerCase(), k=$("fltKind").value, c=$("fltCat").value, cf=$("fltConf").value;
+  return all.filter(r=>{
+    if(k&&r.kind!==k) return false; if(c&&r.category!==c) return false; if(cf&&r.confidence!==cf) return false;
+    if(q){const hay=[r.mac,r.name,r.vendor,r.location,r.notes,r.category,r.channel,r.source].join(" ").toLowerCase(); if(!hay.includes(q)) return false;}
+    return true;
+  });
+}
+function render(){
+  const list=filtered(), counts={};
+  for(const r of all) counts[r.mac]=(counts[r.mac]||0)+1;
+  $("rows").innerHTML = list.map(r=>{
+    let act = "";
+    if(isAdmin){
+      act = pending===r.id
+        ? '<button type="button" class="ghost" data-del-yes="'+r.id+'" style="color:var(--crit)">Delete</button><button type="button" class="ghost" data-del-no>Keep</button>'
+        : '<button type="button" class="ghost" data-hide="'+r.id+'">'+(r.hidden?"Unhide":"Hide")+'</button><button type="button" class="ghost" data-del="'+r.id+'" aria-label="Delete sighting">✕</button>';
+    }
+    return '<tr class="'+(r.hidden?"is-hidden":"")+'">'+
+      '<td class="mono">'+esc(fmtTime(r.ts))+'</td>'+
+      '<td><span class="kind '+r.kind+'">'+r.kind+'</span></td>'+
+      '<td class="mono">'+esc(r.mac)+(r.random_mac?'<span class="rand" title="Randomized (locally administered) address">RND</span>':"")+(counts[r.mac]>1?'<span class="rep">×'+counts[r.mac]+'</span>':"")+'</td>'+
+      '<td>'+esc(r.name||"—")+(r.vendor?'<span class="sub">'+esc(r.vendor)+'</span>':"")+'</td>'+
+      '<td><span class="cat" style="--cat:'+(CAT_COLOR[r.category]||"var(--muted)")+'">'+esc(r.category)+'</span></td>'+
+      '<td><span class="conf '+r.confidence+'">'+esc(r.confidence)+'</span></td>'+
+      '<td class="mono num">'+(r.rssi??"—")+bars(r.rssi)+'</td>'+
+      '<td class="mono">'+esc(r.channel||"—")+'</td>'+
+      '<td>'+esc(r.location||"—")+(r.lat!=null&&r.lng!=null?'<span class="sub mono">'+r.lat.toFixed(5)+', '+r.lng.toFixed(5)+'</span>':"")+(r.source?'<span class="sub">via '+esc(r.source)+'</span>':"")+'</td>'+
+      '<td class="note">'+esc(r.notes||"")+'</td>'+
+      '<td style="white-space:nowrap">'+act+'</td></tr>';
+  }).join("");
+  $("empty").hidden = all.length>0;
+  $("countHint").textContent = all.length ? "Showing "+list.length+" of "+all.length+" sightings, newest first." : "";
+  $("stTotal").textContent = all.length;
+  $("stUnique").textContent = Object.keys(counts).length;
+  $("stRepeat").textContent = Object.values(counts).filter(n=>n>1).length;
+  $("stConfirmed").textContent = all.filter(r=>r.confidence==="confirmed").length;
+  const dayAgo=Date.now()-864e5; $("st24").textContent = all.filter(r=>new Date(r.ts).getTime()>dayAgo).length;
+  renderPatterns();
+}
+const uniq = a => [...new Set(a.filter(Boolean))];
+function group(keyFn, subFn){
+  const m=new Map();
+  for(const r of all){const k=keyFn(r); if(!k) continue; const g=m.get(k)||{k,n:0,rows:[]}; g.n++; g.rows.push(r); m.set(k,g);}
+  return [...m.values()].sort((a,b)=>b.n-a.n).slice(0,12).map(g=>({...g,sub:subFn(g)}));
+}
+function renderPatterns(){
+  document.querySelectorAll(".tabs [data-pt]").forEach(b=>b.setAttribute("aria-selected",b.dataset.pt===patTab));
+  let items=[], hint="";
+  if(patTab==="repeat"){
+    items = group(r=>r.mac, g=>{const places=uniq(g.rows.map(r=>r.location)); return [uniq(g.rows.map(r=>r.name)).slice(0,2).join(", "), uniq(g.rows.map(r=>r.category)).join(" / "), places.length+" place"+(places.length===1?"":"s")].filter(Boolean).join(" · ");}).filter(g=>g.n>1);
+    hint="Same MAC seen more than once. Randomized BLE addresses rotate, so for phones and trackers compare names and vendor data instead.";
+  } else if(patTab==="oui"){
+    items = group(r=>!r.random_mac?r.oui:"", g=>{const c={}; g.rows.forEach(r=>c[r.category]=(c[r.category]||0)+1); return (uniq(g.rows.map(r=>r.vendor))[0]||"vendor not noted")+" · "+Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([k,n])=>k+" "+n).join(", ");});
+    hint="First three bytes of fixed MACs. A prefix that keeps landing on one category is a strong signature for auto-identifying that device type.";
+  } else if(patTab==="cat"){
+    items = group(r=>r.category, g=>{const c=g.rows.filter(r=>r.confidence==="confirmed").length; const rs=g.rows.map(r=>r.rssi).filter(v=>v!=null); return c+" confirmed"+(rs.length?" · avg "+Math.round(rs.reduce((a,b)=>a+b,0)/rs.length)+" dBm":"");});
+    hint="How detections split by category, with how many were confirmed by eye.";
+  } else {
+    items = group(r=>r.location, g=>uniq(g.rows.map(r=>r.category)).join(" / "));
+    hint="Locations with the most sightings. Fixed cameras should show the same MAC at the same place every pass.";
+  }
+  const max=items.reduce((a,b)=>Math.max(a,b.n),1);
+  $("patList").innerHTML = items.length ? items.map(g=>'<li><span style="min-width:0"><span class="'+(patTab==="repeat"||patTab==="oui"?"mono":"")+'">'+esc(g.k)+'</span><span class="sub">'+esc(g.sub)+'</span></span><span class="mono">'+g.n+'</span><span class="bar"><span style="width:'+(g.n/max*100)+'%"></span></span></li>').join("")
+    : '<li class="muted" style="display:block">'+(patTab==="repeat"?"No device has been seen twice yet.":"Nothing to group yet.")+'</li>';
+  $("patHint").textContent = hint;
+}
+function flash(id,text,err){const el=$(id); el.textContent=text; el.className="msg "+(err?"err":"ok"); if(!err) setTimeout(()=>{ if(el.textContent===text) el.textContent=""; },3500);}
+function setConn(state,text){ $("connDot").className="dot "+state; $("connText").textContent=text; }
+
+// ---------- data ----------
+async function load(){
+  const { data, error } = await sb.from("sightings").select("*").order("ts",{ascending:false}).limit(1000);
+  if(error){ setConn("off","Couldn't load sightings: "+error.message); return; }
+  all = data; setConn("live", all.length+" sightings · live"+(isAdmin?" · moderator":"")); render();
+}
+let reloadTimer=null;
+const scheduleReload = () => { clearTimeout(reloadTimer); reloadTimer=setTimeout(load,600); };
+
+// ---------- account ----------
+let role = null;
+// ---------- events ----------
+["q","fltKind","fltCat","fltConf"].forEach(id=>$(id).addEventListener("input",render));
+document.querySelector(".tabs").addEventListener("click",e=>{const b=e.target.closest("[data-pt]"); if(b){patTab=b.dataset.pt; renderPatterns();}});
+
+$("rows").addEventListener("click",async e=>{
+  const d=e.target.closest("[data-del]"), y=e.target.closest("[data-del-yes]"), n=e.target.closest("[data-del-no]"), h=e.target.closest("[data-hide]");
+  if(d){pending=d.dataset.del; render(); return;}
+  if(n){pending=null; render(); return;}
+  if(y){ pending=null; const { error } = await sb.from("sightings").delete().eq("id",y.dataset.delYes); if(error) flash("addMsg","Couldn't delete: "+error.message,true); load(); return; }
+  if(h){ const row=all.find(r=>r.id===h.dataset.hide); const { error } = await sb.from("sightings").update({hidden:!row.hidden}).eq("id",row.id); if(error) flash("addMsg","Couldn't update: "+error.message,true); load(); }
+});
+
+$("geoBtn").onclick = () => {
+  if(!navigator.geolocation){ flash("geoMsg","Location isn't available in this browser.",true); return; }
+  $("geoMsg").textContent="Locating…"; $("geoMsg").className="msg";
+  navigator.geolocation.getCurrentPosition(p=>{
+    $("fLat").value=p.coords.latitude.toFixed(6); $("fLng").value=p.coords.longitude.toFixed(6); flash("geoMsg","Filled (±"+Math.round(p.coords.accuracy)+" m)");
+  }, err=>flash("geoMsg", err.code===1?"Location permission was denied.":"Couldn't get a location fix.", true), {enableHighAccuracy:true,timeout:15000});
+};
+
+$("addForm").addEventListener("submit",async e=>{
+  e.preventDefault();
+  if($("fWebsite").value){ flash("addMsg","Saved"); return; } // honeypot: bots fill hidden fields
+  if(!sb){ flash("addMsg","Not connected to the log.",true); return; }
+  const t=$("fTime").value?new Date($("fTime").value):new Date();
+  const row=toRow({ts:t.toISOString(), kind:document.querySelector('input[name="kind"]:checked').value, mac:$("fMac").value, name:$("fName").value,
+    category:$("fCat").value, confidence:$("fConf").value, rssi:$("fRssi").value, channel:$("fCh").value, vendor:$("fVendor").value,
+    source:$("fSrc").value, location:$("fLoc").value, lat:$("fLat").value, lng:$("fLng").value, notes:$("fNotes").value});
+  $("addBtn").disabled=true;
+  const { error } = await sb.from("sightings").insert(row);
+  $("addBtn").disabled=false;
+  if(error){ flash("addMsg",friendlyErr(error),true); return; }
+  flash("addMsg","Saved");
+  ["fMac","fName","fRssi","fNotes"].forEach(id=>$(id).value=""); $("fConf").value="unverified"; $("fTime").value=localInputNow(); $("fMac").focus();
+  scheduleReload();
+});
+
+function parseCSV(text){
+  const rows=[]; let row=[], cell="", q=false;
+  for(let i=0;i<text.length;i++){const ch=text[i];
+    if(q){ if(ch==='"'){ if(text[i+1]==='"'){cell+='"';i++;} else q=false; } else cell+=ch; }
+    else if(ch==='"') q=true; else if(ch===','){row.push(cell);cell="";}
+    else if(ch==='\n'||ch==='\r'){ if(ch==='\r'&&text[i+1]==='\n') i++; row.push(cell); rows.push(row); row=[]; cell=""; } else cell+=ch; }
+  if(cell!==""||row.length){row.push(cell);rows.push(row);}
+  return rows.filter(r=>r.some(c=>c.trim()!==""));
+}
+const ALIASES={ts:["time","timestamp","ts","seen","date","datetime"],kind:["type","kind","radio"],mac:["mac","bssid","address","addr"],name:["name","ssid","device","label"],
+  rssi:["rssi","dbm","signal"],channel:["channel","ch","freq","band"],category:["category","class","tag","detected","match"],vendor:["vendor","manufacturer","mfr"],
+  location:["location","place","where"],lat:["lat","latitude"],lng:["lng","lon","long","longitude"],source:["source","seen_by"],notes:["notes","note","comment"],confidence:["confidence","conf"]};
+function mapObj(o){
+  const low={}; for(const k in o) low[k.trim().toLowerCase()]=o[k];
+  const out={}; for(const f in ALIASES){ for(const a of ALIASES[f]) if(low[a]!=null&&low[a]!==""){out[f]=low[a];break;} }
+  out.kind=/ble|blue/i.test(String(out.kind||""))?"BLE":"WiFi";
+  const d=out.ts?new Date(out.ts):new Date(); out.ts=isNaN(d)?new Date().toISOString():d.toISOString();
+  return out;
+}
+$("impBtn").onclick = async ()=>{
+  if(!sb){ flash("impMsg","Not connected to the log.",true); return; }
+  const text=$("impText").value.trim(); if(!text){ flash("impMsg","Paste CSV or JSON first.",true); return; }
+  let objs=[];
+  try{
+    if(/^[\[{]/.test(text)){ const j=JSON.parse(text); objs=Array.isArray(j)?j:[j]; }
+    else { const rows=parseCSV(text); const head=rows.shift().map(h=>h.trim()); objs=rows.map(r=>Object.fromEntries(head.map((h,i)=>[h,r[i]??""]))); }
+  }catch(err){ flash("impMsg","Couldn't read that. Check the header row or JSON syntax.",true); return; }
+  const rows=objs.map(mapObj).filter(o=>o.mac).map(toRow);
+  if(!rows.length){ flash("impMsg","No rows with a MAC/BSSID column found.",true); return; }
+  if(rows.length>200){ flash("impMsg","That's "+rows.length+" rows. Import 200 or fewer at a time.",true); return; }
+  $("impBtn").disabled=true;
+  const { error } = await sb.from("sightings").insert(rows);
+  $("impBtn").disabled=false;
+  if(error){ flash("impMsg",friendlyErr(error),true); return; }
+  flash("impMsg","Imported "+rows.length+" sightings."); $("impText").value=""; scheduleReload();
+};
+
+$("copyBtn").onclick = async ()=>{
+  const cols=["ts","kind","mac","name","category","confidence","rssi","channel","vendor","source","location","lat","lng","notes"];
+  const csv=[cols.join(",")].concat(filtered().map(r=>cols.map(c=>{const v=r[c]??"";return /[",\n]/.test(String(v))?'"'+String(v).replace(/"/g,'""')+'"':v;}).join(","))).join("\n");
+  try{ await navigator.clipboard.writeText(csv); flash("copyMsg","Copied"); }catch(e){ flash("copyMsg","Clipboard blocked",true); }
+};
+
+$("signOut").onclick = async ()=>{ await sb.auth.signOut(); location.reload(); };
+
+// ---------- boot ----------
+render();
+SentinelGate.start().then(ctx=>{
+  sb = ctx.sb; role = ctx.role; isAdmin = role==="owner";
+  $("ownerMsg").textContent = ctx.email+" · "+role; $("ownerMsg").className="msg";
+  load();
+  sb.channel("sightings-feed")
+    .on("postgres_changes",{event:"*",schema:"public",table:"sightings"},scheduleReload)
+    .subscribe(status=>{ if(status==="CHANNEL_ERROR"||status==="TIMED_OUT") setConn("off","Live updates paused. Reload to reconnect."); });
+});
+})();
+</script>
+</body>
+</html>

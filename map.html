@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Sentinel Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Layout: full-bleed map; command bar on top; intel rail on the right (bottom sheet on phones); timeline scrubber along the bottom */
+:root{
+  --bg:#0e1517; --panel:#141d20; --panel-2:#1a2528; --line:#24474a; --line-soft:#1e3134;
+  --fg:#d9e4e2; --muted:#83999a; --accent:#ff8a1f; --accent-ink:#1a0d00;
+  --wifi:#ff6b5e; --ble:#5aa9ff; --ok:#4fd1a1; --warn:#ffc547; --crit:#ff3b3b;
+  --f-display:"Chakra Petch","Rajdhani","Segoe UI",sans-serif;
+  --f-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:14px;line-height:1.45}
+[hidden]{display:none!important}
+.app{position:fixed;inset:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;grid-template-columns:minmax(0,1fr) 340px;
+  padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0)}
+.bar{grid-column:1 / -1;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
+.brand{display:flex;align-items:baseline;gap:12px}
+.brand h1{font-family:var(--f-display);font-size:1.05rem;letter-spacing:.14em;text-transform:uppercase;margin:0}
+.brand a{color:var(--muted);font-family:var(--f-display);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase;text-decoration:none}
+.brand a:hover{color:var(--accent)}
+.ctl{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.stat{font-family:var(--f-mono);font-size:.78rem;color:var(--muted);display:flex;gap:12px;flex-wrap:wrap}
+.stat b{color:var(--fg);font-weight:500}
+.stat b.flag{color:var(--crit)}
+#map{grid-column:1;grid-row:2;background:#0b1113;min-height:0}
+.rail{grid-column:2;grid-row:2 / 4;border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;display:flex;flex-direction:column;min-height:0}
+.sec{padding:12px 14px;border-bottom:1px solid var(--line-soft);display:flex;flex-direction:column;gap:8px}
+h2{font-family:var(--f-display);font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);margin:0;font-weight:600}
+.label{font-family:var(--f-display);font-size:.68rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.hint{font-size:.75rem;color:var(--muted);margin:0}
+.mono{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+select,input{font:inherit;color:var(--fg);background:var(--panel-2);border:1px solid var(--line-soft);padding:6px 8px;border-radius:2px;min-width:0}
+input[type=search]{width:100%}
+input[type=number]{width:64px}
+button{font-family:var(--f-display);letter-spacing:.08em;text-transform:uppercase;font-size:.74rem;font-weight:600;cursor:pointer;border-radius:2px;padding:6px 10px;border:1px solid var(--line);background:transparent;color:var(--fg)}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button.on{border-color:var(--accent);color:var(--accent)}
+button:hover{filter:brightness(1.15)}
+select:focus,input:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.tune{display:grid;grid-template-columns:1fr auto;gap:6px 8px;align-items:center;font-size:.8rem}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{font-size:.72rem;padding:3px 7px;border:1px solid var(--line-soft);border-radius:2px;cursor:pointer;display:inline-flex;gap:5px;align-items:center;font-family:var(--f-body);letter-spacing:0;text-transform:none;font-weight:500;color:var(--muted)}
+.chip::before{content:"";width:7px;height:7px;background:var(--c)}
+.chip.on{color:var(--fg);border-color:var(--line)}
+.chip:not(.on)::before{opacity:.3}
+.list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.list li{display:grid;grid-template-columns:8px minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 6px;cursor:pointer;border:1px solid transparent}
+.list li:hover,.list li.sel{background:var(--panel-2);border-color:var(--line-soft)}
+.list .sw{width:8px;height:8px}
+.list .t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.list .s{display:block;color:var(--muted);font-size:.72rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.list .n{font-family:var(--f-mono);font-size:.8rem}
+.list li.alert .n{color:var(--crit)}
+.empty{color:var(--muted);font-size:.8rem;padding:4px 2px}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 10px;font-size:.8rem}
+.kv dt{color:var(--muted);font-family:var(--f-display);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;padding-top:2px}
+.kv dd{margin:0;overflow-wrap:anywhere}
+.tag{font-family:var(--f-mono);font-size:.68rem;padding:1px 5px;border:1px solid currentColor;border-radius:2px}
+.tag.crit{color:var(--crit)} .tag.warn{color:var(--warn)} .tag.mute{color:var(--muted)}
+.slist{font-size:.76rem;max-height:220px;overflow:auto;border:1px solid var(--line-soft)}
+.slist div{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:8px;padding:4px 6px;border-bottom:1px solid var(--line-soft)}
+.time{grid-column:1;grid-row:3;display:flex;gap:10px;align-items:center;padding:8px 14px;border-top:1px solid var(--line);background:var(--panel)}
+.time input[type=range]{flex:1;accent-color:var(--accent);min-width:80px}
+.time .mono{font-size:.78rem;color:var(--muted);white-space:nowrap}
+#status{font-family:var(--f-mono);font-size:.75rem;color:var(--muted)}
+#status.err{color:var(--crit)}
+.railToggle{display:none}
+/* Leaflet theming */
+.leaflet-container{background:#0b1113;font-family:var(--f-body)}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:2px;box-shadow:none}
+.leaflet-popup-content{margin:10px 12px;font-size:.8rem;line-height:1.45}
+.leaflet-popup-content b{font-family:var(--f-display);letter-spacing:.06em}
+.leaflet-bar a{background:var(--panel);color:var(--fg);border-color:var(--line)}
+.leaflet-control-attribution{background:rgba(14,21,23,.75)!important;color:var(--muted)}
+.leaflet-control-attribution a{color:var(--muted)}
+@media (max-width:860px){
+  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto}
+  .rail{position:fixed;left:0;right:0;bottom:0;max-height:62vh;grid-column:auto;grid-row:auto;border-left:none;border-top:1px solid var(--line);z-index:1000;transform:translateY(calc(100% - 0px));transition:transform .2s}
+  .rail.open{transform:none}
+  .railToggle{display:inline-block}
+  .stat{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand"><h1>Sentinel Map</h1><a href="index.html">Log</a></div>
+    <div class="stat" aria-live="polite">
+      <span>devices <b id="sDev">0</b></span><span>sightings <b id="sSee">0</b></span><span>possible followers <b id="sFol" class="flag">0</b></span>
+    </div>
+    <div class="ctl">
+      <select id="win" aria-label="Time window">
+        <option value="6">Last 6 h</option><option value="24" selected>Last 24 h</option><option value="72">Last 3 days</option>
+        <option value="168">Last 7 days</option><option value="720">Last 30 days</option><option value="0">Everything</option>
+      </select>
+      <button type="button" class="railToggle" id="railBtn" aria-controls="rail" aria-expanded="false">Intel</button>
+      <button type="button" id="outBtn">Sign out</button>
+    </div>
+  </header>
+
+  <div id="map" role="region" aria-label="Map of detections"></div>
+
+  <aside class="rail" id="rail" aria-label="Map controls and findings">
+    <section class="sec" id="detailSec" hidden>
+      <div class="row" style="justify-content:space-between"><h2>Device</h2><button type="button" id="detClose">Close</button></div>
+      <div id="detail"></div>
+    </section>
+
+    <section class="sec">
+      <h2>Possible followers</h2>
+      <p class="hint">Mobile devices you picked up at several separate places in this window. Your own gear will show here until you mark it as yours.</p>
+      <ul class="list" id="folList"></ul>
+    </section>
+
+    <section class="sec">
+      <h2>Filters</h2>
+      <input type="search" id="q" placeholder="MAC, name, vendor, place" aria-label="Search devices">
+      <div class="row">
+        <select id="kind" aria-label="Radio"><option value="">WiFi + BLE</option><option>WiFi</option><option>BLE</option></select>
+        <button type="button" id="tracksBtn" class="on" aria-pressed="true">Tracks</button>
+        <button type="button" id="mineBtn" aria-pressed="false">Show mine</button>
+      </div>
+      <div class="chips" id="cats" role="group" aria-label="Categories"></div>
+      <div class="row"><button type="button" id="catAll">All</button><button type="button" id="catNone">None</button></div>
+    </section>
+
+    <section class="sec">
+      <h2>Follower rule</h2>
+      <div class="tune">
+        <label for="tPlaces">Separate places, at least</label><input id="tPlaces" type="number" min="2" max="20" value="3">
+        <label for="tRadius">Same place if within (m)</label><input id="tRadius" type="number" min="50" max="2000" step="50" value="300">
+        <label for="tSpread">Places spread over at least (km)</label><input id="tSpread" type="number" min="0" max="200" step="0.5" value="1">
+        <label for="tSpan">Seen across at least (min)</label><input id="tSpan" type="number" min="0" max="1440" step="5" value="15">
+      </div>
+      <p class="hint">Fixed gear (Flock, ALPR, cameras, smart home) never counts as a follower. Those get one estimated position instead, weighted by signal strength.</p>
+    </section>
+
+    <section class="sec">
+      <h2>All devices</h2>
+      <ul class="list" id="devList"></ul>
+    </section>
+
+    <section class="sec"><span id="status">Signing in…</span></section>
+  </aside>
+
+  <div class="time">
+    <button type="button" id="playBtn" aria-label="Play timeline">▶</button>
+    <input type="range" id="scrub" min="0" max="1000" value="1000" aria-label="Show detections up to this time">
+    <span class="mono" id="scrubLbl">now</span>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="gate.js"></script>
+<script>
+(function(){
+const CATS = [
+  ["Flock","#ff8a1f"],["ALPR","#ffb21f"],["Axon","#ffd447"],["Police / fleet router","#ff5a5a"],
+  ["IP camera","#e36bff"],["Ring","#5fd0ff"],["Blink","#3fb6d9"],["AirTag","#c9d4d6"],["Tile","#9fe870"],
+  ["SmartTag","#7a9cff"],["Smart glasses","#ff7aa8"],["Drone","#b98cff"],["Skimmer","#ff4f8b"],
+  ["Flipper / hacking tool","#ff3d3d"],["Deauth attack","#ff2a2a"],["iBeacon","#64d6b8"],
+  ["Govee / smart home","#68e0a0"],["Hotspot","#8fb0b2"],["Unknown","#6f8586"]
+];
+const COLOR = Object.fromEntries(CATS);
+// Things bolted to a pole or a wall: estimated position, never "following" you.
+const FIXED = new Set(["Flock","ALPR","IP camera","Ring","Blink","Govee / smart home","Skimmer"]);
+const $ = id => document.getElementById(id);
+const esc = s => String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const store = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } },
+                set(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} } };
+
+let sb=null, rows=[], devices=[], selected=null, playTimer=null;
+let catsOn = new Set(store.get("sm.cats", CATS.map(c=>c[0])));
+let mine = new Set(store.get("sm.mine", []));
+let showTracks = true, showMine = false;
+
+// ---------- map ----------
+const map = L.map("map", { preferCanvas:true, zoomControl:true, worldCopyJump:true }).setView([38.04,-84.5], 9);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  maxZoom:20, subdomains:"abcd",
+  attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+}).addTo(map);
+const layer = L.layerGroup().addTo(map);
+let fitted = false;
+
+// ---------- geometry ----------
+function meters(a,b){
+  const R=6371000, toR=Math.PI/180, dLat=(b.lat-a.lat)*toR, dLng=(b.lng-a.lng)*toR;
+  const h=Math.sin(dLat/2)**2+Math.cos(a.lat*toR)*Math.cos(b.lat*toR)*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+function clusterPlaces(pts, radius){
+  const places=[];
+  for(const p of pts){
+    let hit=null;
+    for(const c of places){ if(meters(c,p)<=radius){ hit=c; break; } }
+    if(hit){ hit.n++; hit.lat+=(p.lat-hit.lat)/hit.n; hit.lng+=(p.lng-hit.lng)/hit.n; hit.last=p.t; }
+    else places.push({lat:p.lat,lng:p.lng,n:1,first:p.t,last:p.t});
+  }
+  return places;
+}
+function weightedSpot(pts){
+  // Stronger signal = closer to the device. Weight by (rssi+100)^2, default -80 dBm.
+  let W=0, lat=0, lng=0;
+  for(const p of pts){ const w=Math.max(1,(p.rssi??-80)+100)**2; W+=w; lat+=p.lat*w; lng+=p.lng*w; }
+  const c={lat:lat/W,lng:lng/W};
+  const spread=Math.max(15, ...pts.map(p=>meters(c,p)));
+  return {...c, spread};
+}
+
+// ---------- grouping ----------
+// Fixed MACs group by MAC. Randomized BLE addresses rotate, so those group by a fingerprint of
+// category + name + vendor data when there is one: fuzzier, flagged as such.
+function keyOf(r){
+  if(r.random_mac && (r.name||r.vendor)) return "fp|"+r.category+"|"+(r.name||"")+"|"+(r.vendor||"");
+  return r.mac;
+}
+function tune(){
+  return { places:+$("tPlaces").value||3, radius:+$("tRadius").value||300,
+           spread:(+$("tSpread").value||0)*1000, span:(+$("tSpan").value||0)*60000 };
+}
+function build(){
+  const T=tune(), m=new Map();
+  for(const r of rows){
+    if(r.lat==null||r.lng==null) continue;
+    const k=keyOf(r); let d=m.get(k);
+    if(!d){ d={ key:k, fuzzy:k.startsWith("fp|"), macs:new Set(), cat:r.category, kind:r.kind, name:r.name, vendor:r.vendor, pts:[] }; m.set(k,d); }
+    d.macs.add(r.mac); if(!d.name&&r.name) d.name=r.name; if(!d.vendor&&r.vendor) d.vendor=r.vendor;
+    d.pts.push({ lat:r.lat, lng:r.lng, t:new Date(r.ts).getTime(), rssi:r.rssi, loc:r.location, src:r.source, conf:r.confidence });
+  }
+  devices=[...m.values()].map(d=>{
+    d.pts.sort((a,b)=>a.t-b.t);
+    d.fixed=FIXED.has(d.cat);
+    d.first=d.pts[0].t; d.last=d.pts[d.pts.length-1].t;
+    d.places=clusterPlaces(d.pts, T.radius);
+    let far=0; for(let i=0;i<d.places.length;i++) for(let j=i+1;j<d.places.length;j++) far=Math.max(far,meters(d.places[i],d.places[j]));
+    d.far=far;
+    d.mine=mine.has(d.key);
+    d.follower = !d.fixed && !d.mine && d.places.length>=T.places && far>=T.spread && (d.last-d.first)>=T.span;
+    if(d.fixed) d.spot=weightedSpot(d.pts);
+    return d;
+  });
+}
+
+// ---------- render ----------
+function visible(d){
+  if(!catsOn.has(d.cat)) return false;
+  if(d.mine && !showMine) return false;
+  const k=$("kind").value; if(k&&d.kind!==k) return false;
+  const q=$("q").value.trim().toLowerCase();
+  if(q){ const hay=[...d.macs,d.name,d.vendor,d.cat,...d.pts.map(p=>p.loc)].join(" ").toLowerCase(); if(!hay.includes(q)) return false; }
+  return true;
+}
+function cutoff(){
+  const v=+$("scrub").value; if(v>=1000||!rows.length) return Infinity;
+  const [a,b]=span(); return a+(b-a)*v/1000;
+}
+function span(){
+  const ts=rows.map(r=>new Date(r.ts).getTime());
+  return [Math.min(...ts), Math.max(...ts)];
+}
+function fmt(t){ const d=new Date(t); return d.toLocaleDateString(undefined,{month:"short",day:"numeric"})+" "+d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}); }
+function label(d){ return d.name || (d.fuzzy ? d.cat+" (rotating MAC)" : [...d.macs][0]); }
+
+function draw(){
+  layer.clearLayers();
+  const cut=cutoff(), bounds=[];
+  $("scrubLbl").textContent = cut===Infinity ? "now" : fmt(cut);
+  let nDev=0, nSee=0, nFol=0;
+  for(const d of devices){
+    if(!visible(d)) continue;
+    const pts=d.pts.filter(p=>p.t<=cut); if(!pts.length) continue;
+    nDev++; nSee+=pts.length; if(d.follower) nFol++;
+    const col=COLOR[d.cat]||"#6f8586", sel=selected===d.key, dim=selected&&!sel;
+    if(d.fixed){
+      const s=weightedSpot(pts);
+      L.circle([s.lat,s.lng],{radius:Math.min(s.spread,800),color:col,weight:1,opacity:dim?.15:.5,fillOpacity:dim?.02:.08,interactive:false}).addTo(layer);
+      L.circleMarker([s.lat,s.lng],{radius:sel?9:6,color:"#0b1113",weight:2,fillColor:col,fillOpacity:dim?.25:1})
+        .bindPopup(pop(d,pts)).on("click",()=>select(d.key,false)).addTo(layer);
+      bounds.push([s.lat,s.lng]);
+    } else {
+      if(showTracks && pts.length>1){
+        L.polyline(pts.map(p=>[p.lat,p.lng]),{color:d.follower?"#ff3b3b":col,weight:sel?4:(d.follower?3:1.5),
+          opacity:dim?.1:(d.follower?.9:.55),dashArray:d.fuzzy?"4 6":null,interactive:false}).addTo(layer);
+      }
+      pts.forEach((p,i)=>{
+        const last=i===pts.length-1;
+        L.circleMarker([p.lat,p.lng],{radius:last?(sel?8:5):3,color:d.follower?"#ff3b3b":"#0b1113",weight:last?2:1,
+          fillColor:col,fillOpacity:dim?.2:(last?1:.6)}).bindPopup(pop(d,pts,p)).on("click",()=>select(d.key,false)).addTo(layer);
+        bounds.push([p.lat,p.lng]);
+      });
+    }
+  }
+  $("sDev").textContent=nDev; $("sSee").textContent=nSee; $("sFol").textContent=nFol;
+  $("railBtn").textContent = nFol ? "Intel · "+nFol+" ⚠" : "Intel"; $("railBtn").style.color = nFol ? "var(--crit)" : "";
+  if(!fitted && bounds.length){ map.fitBounds(bounds,{padding:[30,30],maxZoom:15}); fitted=true; }
+}
+function pop(d,pts,p){
+  const base='<b>'+esc(label(d))+'</b><br><span style="color:'+(COLOR[d.cat]||"#999")+'">'+esc(d.cat)+'</span> · '+esc(d.kind)+
+    (d.follower?' · <span style="color:#ff3b3b">POSSIBLE FOLLOWER</span>':'')+'<br>';
+  if(p) return base+fmt(p.t)+(p.rssi!=null?' · '+p.rssi+' dBm':'')+(p.loc?'<br>'+esc(p.loc):'')+'<br>'+pts.length+' sightings here and elsewhere';
+  return base+'Estimated from '+pts.length+' sightings<br>Last '+fmt(pts[pts.length-1].t);
+}
+
+function lists(){
+  const vis=devices.filter(visible);
+  const fol=vis.filter(d=>d.follower).sort((a,b)=>b.places.length-a.places.length||b.last-a.last);
+  $("folList").innerHTML = fol.length ? fol.map(d=>item(d,true)).join("") : '<li class="empty" style="display:block;cursor:default">Nothing has tailed you in this window.</li>';
+  const all=vis.slice().sort((a,b)=>b.last-a.last).slice(0,200);
+  $("devList").innerHTML = all.length ? all.map(d=>item(d,false)).join("") : '<li class="empty" style="display:block;cursor:default">No located detections in this window.</li>';
+}
+function item(d,alert){
+  return '<li data-k="'+esc(d.key)+'" class="'+(alert?"alert ":"")+(selected===d.key?"sel":"")+'"><span class="sw" style="background:'+(COLOR[d.cat]||"#6f8586")+'"></span>'+
+    '<span class="t">'+esc(label(d))+'<span class="s">'+esc(d.cat)+' · '+d.places.length+' place'+(d.places.length===1?"":"s")+' · last '+esc(fmt(d.last))+(d.mine?" · mine":"")+'</span></span>'+
+    '<span class="n">'+(alert?d.places.length+"×":d.pts.length)+'</span></li>';
+}
+
+function detail(){
+  const d=devices.find(x=>x.key===selected);
+  $("detailSec").hidden=!d; if(!d) return;
+  const tags=[d.follower?'<span class="tag crit">possible follower</span>':"", d.fixed?'<span class="tag mute">fixed</span>':"",
+    d.fuzzy?'<span class="tag warn">fingerprint match</span>':"", d.mine?'<span class="tag mute">mine</span>':""].join(" ");
+  const recent=d.pts.slice().reverse().slice(0,40);
+  $("detail").innerHTML =
+    '<div class="row" style="margin-bottom:6px">'+tags+'</div>'+
+    '<dl class="kv">'+
+      '<dt>Name</dt><dd>'+esc(d.name||"—")+'</dd>'+
+      '<dt>Category</dt><dd>'+esc(d.cat)+' · '+esc(d.kind)+'</dd>'+
+      '<dt>'+(d.macs.size>1?"MACs":"MAC")+'</dt><dd class="mono">'+[...d.macs].slice(0,6).map(esc).join("<br>")+(d.macs.size>6?"<br>+"+(d.macs.size-6)+" more":"")+'</dd>'+
+      '<dt>Vendor</dt><dd>'+esc(d.vendor||"—")+'</dd>'+
+      '<dt>Seen</dt><dd>'+d.pts.length+' times at '+d.places.length+' place'+(d.places.length===1?"":"s")+(d.far?', '+(d.far/1000).toFixed(1)+' km apart':'')+'</dd>'+
+      '<dt>First</dt><dd>'+esc(fmt(d.first))+'</dd><dt>Last</dt><dd>'+esc(fmt(d.last))+'</dd>'+
+      (d.fixed?'<dt>Est. spot</dt><dd class="mono">'+d.spot.lat.toFixed(5)+', '+d.spot.lng.toFixed(5)+' ±'+Math.round(d.spot.spread)+' m</dd>':'')+
+    '</dl>'+
+    '<div class="row" style="margin-top:8px"><button type="button" id="focusBtn">Zoom to</button>'+
+      '<button type="button" id="mineToggle">'+(d.mine?"Not mine":"Mark as mine")+'</button></div>'+
+    '<span class="label" style="margin-top:6px">Sightings, newest first</span>'+
+    '<div class="slist">'+recent.map(p=>'<div><span class="mono">'+esc(fmt(p.t))+'</span><span class="mono">'+(p.rssi??"—")+'</span><span>'+esc(p.loc||(p.lat.toFixed(4)+", "+p.lng.toFixed(4)))+'</span></div>').join("")+'</div>';
+  $("focusBtn").onclick=()=>focus(d);
+  $("mineToggle").onclick=()=>{ if(mine.has(d.key)) mine.delete(d.key); else mine.add(d.key); store.set("sm.mine",[...mine]); refresh(); };
+}
+function focus(d){
+  const b = d.fixed ? [[d.spot.lat,d.spot.lng]] : d.pts.map(p=>[p.lat,p.lng]);
+  if(b.length===1) map.setView(b[0],16); else map.fitBounds(b,{padding:[40,40],maxZoom:16});
+}
+function select(k,zoom){
+  selected = selected===k && !zoom ? null : k;
+  draw(); lists(); detail();
+  const d=devices.find(x=>x.key===selected);
+  if(d && zoom) focus(d);
+  if(d) $("rail").classList.add("open");
+}
+function refresh(){ build(); draw(); lists(); detail(); }
+
+function chips(){
+  $("cats").innerHTML = CATS.map(([c,col])=>'<button type="button" class="chip'+(catsOn.has(c)?" on":"")+'" style="--c:'+col+'" data-c="'+esc(c)+'" aria-pressed="'+catsOn.has(c)+'">'+esc(c)+'</button>').join("");
+}
+
+// ---------- data ----------
+function setStatus(t,err){ $("status").textContent=t; $("status").className=err?"err":""; }
+async function load(){
+  const hrs=+$("win").value;
+  setStatus("Loading…");
+  const out=[]; const page=1000;
+  for(let from=0; from<20000; from+=page){
+    let q=sb.from("sightings").select("ts,kind,mac,random_mac,name,category,confidence,rssi,vendor,source,location,lat,lng")
+      .not("lat","is",null).not("lng","is",null).order("ts",{ascending:true}).range(from,from+page-1);
+    if(hrs) q=q.gte("ts",new Date(Date.now()-hrs*3600e3).toISOString());
+    const { data, error } = await q;
+    if(error){ setStatus("Couldn't load: "+error.message,true); return; }
+    out.push(...data); if(data.length<page) break;
+  }
+  rows=out;
+  setStatus(rows.length ? rows.length+" located sightings loaded"+(rows.length>=20000?" (capped; narrow the window)":"")+" · live" :
+    "No sightings with GPS in this window. Detections only land on the map when the uploader tags them with a location.");
+  if(selected && !devices.some(d=>d.key===selected)) selected=null;
+  refresh();
+}
+let reloadT=null; const scheduleReload=()=>{ clearTimeout(reloadT); reloadT=setTimeout(load,1500); };
+
+// ---------- events ----------
+$("win").onchange=()=>{ fitted=false; $("scrub").value=1000; load(); };
+["q","kind"].forEach(id=>$(id).addEventListener("input",()=>{ draw(); lists(); }));
+["tPlaces","tRadius","tSpread","tSpan"].forEach(id=>{ const el=$(id); el.value=store.get("sm."+id, el.value); el.addEventListener("change",()=>{ store.set("sm."+id,el.value); refresh(); }); });
+$("cats").addEventListener("click",e=>{ const b=e.target.closest("[data-c]"); if(!b) return; const c=b.dataset.c; catsOn.has(c)?catsOn.delete(c):catsOn.add(c); store.set("sm.cats",[...catsOn]); chips(); draw(); lists(); });
+$("catAll").onclick=()=>{ catsOn=new Set(CATS.map(c=>c[0])); store.set("sm.cats",[...catsOn]); chips(); draw(); lists(); };
+$("catNone").onclick=()=>{ catsOn=new Set(); store.set("sm.cats",[]); chips(); draw(); lists(); };
+$("tracksBtn").onclick=e=>{ showTracks=!showTracks; e.currentTarget.classList.toggle("on",showTracks); e.currentTarget.setAttribute("aria-pressed",showTracks); draw(); };
+$("mineBtn").onclick=e=>{ showMine=!showMine; e.currentTarget.classList.toggle("on",showMine); e.currentTarget.setAttribute("aria-pressed",showMine); draw(); lists(); };
+["folList","devList"].forEach(id=>$(id).addEventListener("click",e=>{ const li=e.target.closest("[data-k]"); if(li) select(li.dataset.k,true); }));
+$("detClose").onclick=()=>{ selected=null; draw(); lists(); detail(); };
+$("scrub").addEventListener("input",draw);
+$("playBtn").onclick=()=>{
+  if(playTimer){ clearInterval(playTimer); playTimer=null; $("playBtn").textContent="▶"; return; }
+  if(+$("scrub").value>=1000) $("scrub").value=0;
+  $("playBtn").textContent="❚❚";
+  playTimer=setInterval(()=>{ const v=Math.min(1000,+$("scrub").value+5); $("scrub").value=v; draw();
+    if(v>=1000){ clearInterval(playTimer); playTimer=null; $("playBtn").textContent="▶"; } },60);
+};
+$("railBtn").onclick=()=>{ const o=$("rail").classList.toggle("open"); $("railBtn").setAttribute("aria-expanded",o); };
+$("outBtn").onclick=async()=>{ if(sb) await sb.auth.signOut(); location.reload(); };
+
+chips();
+SentinelGate.start().then(ctx=>{
+  sb=ctx.sb; load();
+  sb.channel("map-feed").on("postgres_changes",{event:"INSERT",schema:"public",table:"sightings"},scheduleReload)
+    .subscribe(s=>{ if(s==="CHANNEL_ERROR"||s==="TIMED_OUT") setStatus("Live updates paused. Reload to reconnect.",true); });
+});
+
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b1114">
+<title>Sentinel iOS</title>
+<style>
+:root{
+  --bg:#0b1114;--panel:#111b20;--line:#1d4a52;--teal:#2bb3c0;--org:#ff8a1f;--txt:#d9e6ea;--dim:#6f8790;--red:#ff3b3b;
+  --font:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);font:13px/1.35 var(--font);overflow:hidden}
+#app{display:flex;flex-direction:column;height:100%;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+header{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
+header h1{margin:0;font-size:15px;letter-spacing:4px;color:var(--org);flex:1}
+.pill{font-size:10px;padding:3px 7px;border:1px solid var(--line);border-radius:10px;color:var(--dim);white-space:nowrap}
+.pill.on{color:var(--teal);border-color:var(--teal)}
+.pill.bad{color:var(--red);border-color:var(--red)}
+#stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:8px 14px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 4px;text-align:center}
+.stat b{display:block;font-size:16px;color:var(--org)}
+.stat span{font-size:9px;letter-spacing:1px;color:var(--dim)}
+main{flex:1;overflow:hidden;position:relative}
+section{position:absolute;inset:0;overflow-y:auto;padding:4px 14px 14px;display:none}
+section.show{display:block}
+#radarWrap{position:relative;width:100%;max-width:440px;margin:6px auto 0;aspect-ratio:1}
+canvas{width:100%;height:100%;display:block}
+#key{display:flex;flex-wrap:wrap;gap:4px 10px;justify-content:center;margin:10px 0 0;font-size:10px;color:var(--dim)}
+#key i{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+.sub{display:flex;gap:6px;margin:6px 0 8px}
+.sub button,.tabs button,.btn{font:inherit;color:var(--dim);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:7px 10px}
+.sub button.on,.tabs button.on{color:var(--org);border-color:var(--org)}
+.btn{color:var(--org);border-color:var(--org);width:100%;padding:12px;font-size:14px;letter-spacing:2px}
+.btn.alt{color:var(--teal);border-color:var(--line)}
+.row{display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid #15262b}
+.row .tag{min-width:52px;font-size:10px;text-align:center;border:1px solid;border-radius:4px;padding:2px 3px}
+.row .nm{flex:1;min-width:0}
+.row .nm div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .nm small{color:var(--dim);font-size:10px}
+.row .rs{width:58px;text-align:right;font-size:11px}
+.bar{height:3px;background:#1a2a30;border-radius:2px;margin-top:3px}
+.bar i{display:block;height:100%;border-radius:2px}
+h3{font-size:11px;letter-spacing:2px;color:var(--teal);margin:12px 0 4px;font-weight:normal}
+.empty{color:var(--dim);text-align:center;padding:24px 0}
+.tabs{display:flex;gap:6px;padding:8px 14px calc(8px + env(safe-area-inset-bottom) * 0);border-top:1px solid var(--line)}
+.tabs button{flex:1;padding:10px 0;letter-spacing:2px}
+#pop{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.6);z-index:9;padding:24px}
+#pop.show{display:flex}
+#pop .card{width:100%;max-width:360px;background:var(--panel);border:2px solid var(--red);border-radius:10px;padding:18px;text-align:center;animation:pulse 1s infinite}
+#pop .card b{display:block;font-size:22px;letter-spacing:3px;margin:6px 0}
+@keyframes pulse{50%{box-shadow:0 0 24px var(--red)}}
+.note{color:var(--dim);font-size:11px;margin:10px 0}
+.err{color:var(--red)}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>SENTINEL</h1>
+    <span id="pLink" class="pill">NO LINK</span>
+    <span id="pVer" class="pill">CYD --</span>
+  </header>
+  <div id="stats">
+    <div class="stat"><b id="sDev">0</b><span>DEVICES</span></div>
+    <div class="stat"><b id="sThr">0</b><span>THREATS</span></div>
+    <div class="stat"><b id="sPh">--</b><span>PHONES</span></div>
+    <div class="stat"><b id="sPkt">0</b><span>PKT/S</span></div>
+  </div>
+  <main>
+    <section id="vRadar" class="show">
+      <div id="radarWrap"><canvas id="radar"></canvas></div>
+      <div id="key"></div>
+    </section>
+    <section id="vList">
+      <div class="sub"><button data-f="W" class="on">WIFI</button><button data-f="B">BLE</button><button data-f="*">ALL</button></div>
+      <div id="list"></div>
+    </section>
+    <section id="vAlerts">
+      <h3>LIVE</h3><div id="live"></div>
+      <h3>LOG</h3><div id="log"></div>
+      <button class="btn alt" id="clearLog" style="margin-top:12px">CLEAR LOG</button>
+    </section>
+    <section id="vSet">
+      <h3>LINK</h3>
+      <button class="btn" id="connect">CONNECT TO CYD</button>
+      <p class="note">Turn on <b>SET &gt; TAB BROADCAST</b> on the CYD (firmware <b>1.2.52+</b> for iPhone), then tap connect and pick the CYD from the list (it shows as Unknown or Unnamed: it has no name on purpose). Open this page in the <b>Bluefy</b> browser; Safari has no Web Bluetooth.</p>
+      <p id="linkMsg" class="note"></p>
+      <h3>OPTIONS</h3>
+      <label class="row"><span class="nm">Alert sound</span><input type="checkbox" id="optSound" checked></label>
+      <label class="row"><span class="nm">Show smart-home on radar</span><input type="checkbox" id="optHome" checked></label>
+      <label class="row"><span class="nm">Keep screen awake</span><input type="checkbox" id="optWake" checked></label>
+      <h3>TEST</h3>
+      <button class="btn alt" id="demo">START DEMO DATA</button>
+      <p class="note">Demo feeds encoded fake packets through the same decoder, so you can check the UI without the CYD.</p>
+    </section>
+  </main>
+  <nav class="tabs">
+    <button data-v="vRadar" class="on">RADAR</button>
+    <button data-v="vList">LIST</button>
+    <button data-v="vAlerts">ALERTS</button>
+    <button data-v="vSet">SET</button>
+  </nav>
+</div>
+<div id="pop"><div class="card"><small id="popSrc">BLE</small><b id="popType">FLOCK</b><div id="popDesc"></div><div id="popRssi" style="margin-top:8px;color:var(--dim)"></div></div></div>
+
+<script>
+"use strict";
+/* ---------- device types (copied from Sentinel Tab Types.java) ---------- */
+const LABEL=["","DEAUTH","FLIPPER","HACK","AXON","FLOCK","ALPR","RING","BLINK","GOVEE","TILE","AIRTAG","SMTAG","GLASS","DRONE","CAM","SKIMMER","BEACON","SMART","SPEAKER","TV","LOCK","FLEET","DASHCAM","TRACKER","PERSONAL","PHONE"];
+const DESC=["Unknown device","WiFi DEAUTH ATTACK nearby","Flipper Zero / pentest tool","Hacking device / rogue AP","Axon body cam / LE gear","Flock ALPR camera / Raven","License plate reader","Ring camera / doorbell","Blink camera","Govee smart device","Tile tracker","AirTag / Find My tag","Samsung SmartTag tracker","Smart glasses (Meta)","Drone (Remote ID)","IP / security camera","Possible card skimmer","iBeacon / retail beacon","Smart home (plug/bulb/hub)","Smart speaker / assistant","Smart TV / streamer","Smart lock","Police / fleet vehicle gear","Dashcam","Tracker (Chipolo / Google network)","Earbuds / watch / laptop / car etc.","Phone (Apple: likely iPhone)"];
+const C565=[0x9517,0xF800,0xFD20,0xF81F,0xF8E3,0xB29F,0x073C,0x2B3F,0xFF40,0xFBE0,0x0727,0xFFFF,0x6DFF,0xFCB9,0x87F7,0xBC6B,0xF80C,0x94B5,0x07FF,0x9E66,0x6B5F,0x07F0,0xFA60,0xB5B6,0x3FE0,0x7BCF,0xFDE0];
+const ALERT=[0,1,1,1,1,1,1,1,1,0,0,0,0,1,1,0,1,0,0,0,0,0,1,0,0,0,0].map(Boolean);
+const COUNT=LABEL.length;
+const isHome=t=>(t>=18&&t<=21)||t===25||t===26;
+const COL=C565.map(c=>`rgb(${((c>>11)&31)*255/31|0},${((c>>5)&63)*255/63|0},${(c&31)*255/31|0})`);
+
+/* ---------- CYD broadcast decoder (matches CydLink.onAir) ---------- */
+const KEY=[0x5E,0x71,0xA3,0x0C,0x9D,0x42,0xE8,0x37];
+const hex=b=>b.toString(16).toUpperCase().padStart(2,"0");
+const s8=b=>b>127?b-256:b;
+function decode(d){ // d: Uint8Array of manufacturer data after the 0xFFFF company id
+  if(!d||d.length!==27||d[0]!==0xA7) return null;
+  const p=Uint8Array.from(d), seq=p[1];
+  for(let i=2;i<27;i++) p[i]^=(KEY[i&7]^((seq*31+i*7)&0xFF));
+  let sum=0; for(let i=0;i<26;i++) sum+=p[i];
+  if(((sum&0xFF)^0x5A)!==p[26]) return null;
+  const src=p[2]&3; let type=p[2]>>2; if(type>=COUNT) type=0;
+  let nl=0; while(nl<15&&p[11+nl]!==0) nl++;
+  const name=new TextDecoder().decode(p.subarray(11,11+nl));
+  if(src===3) return {hb:true,seq,ver:name,wifi:!!(p[10]&1),ble:!!(p[10]&2),phones:name>="1.2.46"?s8(p[9]):-1};
+  const [m0,m1,m2]=[p[3],p[4],p[5]]; let id;
+  if(m0===0xDE&&m1===0xA0&&m2===0) id="DEAUTH:"+hex(p[6])+hex(p[7])+hex(p[8]);
+  else if(m0===0x5A&&m1===0x5A&&m2===0x5A) id="SPAM:ATTACK";
+  else id=[m0,m1,m2,p[6],p[7],p[8]].map(hex).join(":");
+  return {hb:false,seq,src:src===1?"B":"W",id,name,type,rssi:s8(p[9]),ch:p[10]};
+}
+
+/* ---------- state ---------- */
+const S={devs:new Map(),log:[],ver:"",wifi:false,ble:false,phones:-1,last:0,lastSeq:-1,cnt:0,rate:0,rateT:Date.now(),known:new Set()};
+const opt={sound:true,home:true,wake:true};
+try{const o=JSON.parse(localStorage.getItem("sentinel.opt")||"{}");Object.assign(opt,o);}catch(e){}
+try{S.log=JSON.parse(localStorage.getItem("sentinel.log")||"[]");}catch(e){}
+try{S.known=new Set(JSON.parse(localStorage.getItem("sentinel.known")||"[]"));}catch(e){}
+const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
+
+function onPacket(bytes){
+  const r=decode(bytes); if(!r) return;
+  const now=Date.now(); S.last=now;
+  if(r.seq!==S.lastSeq){S.lastSeq=r.seq;S.cnt++;}
+  if(r.hb){S.ver=r.ver;S.wifi=r.wifi;S.ble=r.ble;if(r.phones>=0)S.phones=r.phones;return;}
+  let d=S.devs.get(r.id);
+  const fresh=!d;
+  if(!d){d={id:r.id,first:now,ang:hashAng(r.id)};S.devs.set(r.id,d);}
+  Object.assign(d,{src:r.src,name:r.name||d.name||"",type:Math.max(r.type,0),rssi:r.rssi,ch:r.ch,seen:now});
+  if(ALERT[d.type]&&(fresh||now-(d.alerted||0)>120000)){d.alerted=now;raiseAlert(d);}
+}
+function hashAng(s){let h=2166136261;for(const c of s)h=Math.imul(h^c.charCodeAt(0),16777619);return ((h>>>0)%3600)/3600*Math.PI*2;}
+
+/* ---------- alerts ---------- */
+let ac=null,popT=0;
+function beep(){
+  if(!opt.sound) return;
+  try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();
+    [0,0.18].forEach(t=>{const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=1320;o.type="square";
+      g.gain.setValueAtTime(0.12,ac.currentTime+t);g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+t+0.14);
+      o.connect(g).connect(ac.destination);o.start(ac.currentTime+t);o.stop(ac.currentTime+t+0.15);});
+  }catch(e){}
+}
+function raiseAlert(d){
+  S.log.unshift({t:Date.now(),type:d.type,id:d.id,name:d.name,rssi:d.rssi,src:d.src});
+  S.log=S.log.slice(0,300); save("sentinel.log",S.log);
+  $("#popSrc").textContent=d.src==="B"?"BLUETOOTH":"WIFI";
+  $("#popType").textContent=LABEL[d.type]; $("#popType").style.color=COL[d.type];
+  $("#popDesc").textContent=DESC[d.type]+(d.name?" · "+d.name:"");
+  $("#popRssi").textContent=d.rssi+" dBm · "+d.id;
+  $("#pop").classList.add("show"); clearTimeout(popT); popT=setTimeout(()=>$("#pop").classList.remove("show"),4000);
+  beep(); if(navigator.vibrate) navigator.vibrate([200,100,200]);
+}
+
+/* ---------- Bluetooth link ---------- */
+const $=s=>document.querySelector(s);
+function msg(t,bad){const m=$("#linkMsg");m.textContent=t;m.className="note"+(bad?" err":"");}
+function handleAdv(ev){
+  const md=ev.manufacturerData&&ev.manufacturerData.get(0xFFFF);
+  if(md) onPacket(new Uint8Array(md.buffer,md.byteOffset,md.byteLength));
+}
+/* CYD 1.2.52+: GATT service that notifies the same 27-byte records (works on iPhone) */
+const PH_SVC="7f3a0001-5e71-4a3c-9d42-e8375e4e5449",PH_CHR="7f3a0002-5e71-4a3c-9d42-e8375e4e5449";
+let phDev=null,phWant=false;
+function onNotify(ev){const v=ev.target.value;onPacket(new Uint8Array(v.buffer,v.byteOffset,v.byteLength));}
+async function gattLink(){
+  const srv=await phDev.gatt.connect();
+  const ch=await (await srv.getPrimaryService(PH_SVC)).getCharacteristic(PH_CHR);
+  ch.addEventListener("characteristicvaluechanged",onNotify);
+  await ch.startNotifications();
+  msg("Connected to the CYD.");wake();
+}
+async function gattRetry(){
+  for(let i=0;phWant&&phDev&&!phDev.gatt.connected;i++){
+    msg("CYD link lost, reconnecting…",true);
+    try{await gattLink();return;}catch(e){}
+    await new Promise(r=>setTimeout(r,Math.min(10000,1500*(i+1))));
+  }
+}
+async function connect(){
+  try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();ac.resume();}catch(e){}
+  if(!navigator.bluetooth){msg("No Web Bluetooth here. Open this page in the Bluefy browser.",true);return;}
+  stopDemo();
+  phWant=false;if(phDev&&phDev.gatt.connected)phDev.gatt.disconnect();phDev=null;
+  try{ // 1) CYD 1.2.52+: connect to the Sentinel service
+    phDev=await navigator.bluetooth.requestDevice({filters:[{services:[PH_SVC]}],optionalServices:[PH_SVC]});
+    phWant=true;
+    phDev.addEventListener("gattserverdisconnected",gattRetry);
+    msg("Connecting…");await gattLink();return;
+  }catch(e){
+    if(phDev&&phDev.gatt&&phDev.gatt.connected) return;
+    if(e.name==="NotFoundError"&&/cancel/i.test(e.message)){msg("Cancelled. Is TAB BROADCAST on and the CYD on 1.2.52+?",true);return;}
+    if(phDev){msg((e.name||"Error")+": "+e.message,true);return;}
+  }
+  try{ // 2) older CYD firmware: read the raw broadcasts (Android / desktop Chrome)
+    if(navigator.bluetooth.requestLEScan){ // best: scan every advert, no device picker
+      try{
+        await navigator.bluetooth.requestLEScan({filters:[{manufacturerData:[{companyIdentifier:0xFFFF}]}],keepRepeatedDevices:true});
+        navigator.bluetooth.addEventListener("advertisementreceived",handleAdv);
+        msg("Scanning for CYD broadcasts…");wake();return;
+      }catch(e){/* fall through to the picker */}
+    }
+    let dev;
+    try{dev=await navigator.bluetooth.requestDevice({filters:[{manufacturerData:[{companyIdentifier:0xFFFF}]}],optionalManufacturerData:[0xFFFF]});}
+    catch(e){
+      if(e.name==="NotFoundError"&&/cancel/i.test(e.message)) throw e;
+      dev=await navigator.bluetooth.requestDevice({acceptAllDevices:true,optionalManufacturerData:[0xFFFF]});
+    }
+    if(!dev.watchAdvertisements){msg("This browser can't read Bluetooth broadcasts (no watchAdvertisements).",true);return;}
+    dev.addEventListener("advertisementreceived",handleAdv);
+    await dev.watchAdvertisements();
+    msg("Listening to "+(dev.name||"CYD")+"…");wake();
+  }catch(e){msg((e.name||"Error")+": "+e.message,true);}
+}
+let wl=null;
+async function wake(){if(!opt.wake||!("wakeLock" in navigator))return;try{wl=await navigator.wakeLock.request("screen");}catch(e){}}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&wl)wake();});
+
+/* ---------- demo: build real encoded packets ---------- */
+let demoT=0,demoSeq=0;
+function encode(src,type,mac,rssi,ch,name){
+  const p=new Uint8Array(27);p[0]=0xA7;p[1]=demoSeq=(demoSeq+1)&0xFF;p[2]=(type<<2)|src;
+  p.set(mac,3);p[9]=rssi&0xFF;p[10]=ch;p.set(new TextEncoder().encode(name).slice(0,15),11);
+  let sum=0;for(let i=0;i<26;i++)sum+=p[i];p[26]=(sum&0xFF)^0x5A;
+  for(let i=2;i<27;i++)p[i]^=(KEY[i&7]^((p[1]*31+i*7)&0xFF));
+  return p;
+}
+const DEMO=[[1,5,[0xB4,0x1E,0x52,1,2,3],"Penguin-4471"],[0,22,[0,0x30,0x44,9,8,7],"IBR900-a1"],[1,11,[0xC1,2,3,4,5,6],""],
+  [0,18,[0x24,0xA1,0x60,1,1,1],"tasmota-5A2"],[1,25,[0x6A,1,2,3,4,5],"AirPods Pro"],[0,0,[0x10,0x20,0x30,1,2,3],"NETGEAR42"],
+  [1,2,[0x80,0xE1,0x26,7,7,7],"Flipper Rak0"],[0,15,[0x44,0x19,0xB6,1,2,3],"IPC-cam-01"],[1,26,[0x7A,9,9,9,9,9],"iPhone"]];
+function startDemo(){
+  stopDemo(); $("#demo").textContent="STOP DEMO";
+  let k=0;
+  demoT=setInterval(()=>{
+    onPacket(encode(3,0,[0,0,0,0,0,0],4,3,"1.2.46")); // heartbeat: 4 phones, WiFi+BLE on
+    const d=DEMO[k++%DEMO.length];
+    if(Math.random()<0.6) onPacket(encode(d[0],d[1],d[2],-45-Math.random()*45|0,6,d[3]));
+  },350);
+}
+function stopDemo(){if(demoT){clearInterval(demoT);demoT=0;$("#demo").textContent="START DEMO DATA";}}
+
+/* ---------- radar ---------- */
+const cv=$("#radar"),cx=cv.getContext("2d");let sweep=0;
+function fit(){const r=cv.getBoundingClientRect(),dp=devicePixelRatio||1;cv.width=r.width*dp;cv.height=r.height*dp;}
+addEventListener("resize",fit);
+function drawRadar(now){
+  const W=cv.width,R=W/2-6,c=W/2,dp=devicePixelRatio||1;
+  cx.clearRect(0,0,W,W);
+  cx.strokeStyle="#1d4a52";cx.lineWidth=1*dp;
+  for(let i=1;i<=4;i++){cx.beginPath();cx.arc(c,c,R*i/4,0,7);cx.stroke();}
+  cx.beginPath();cx.moveTo(c-R,c);cx.lineTo(c+R,c);cx.moveTo(c,c-R);cx.lineTo(c,c+R);cx.stroke();
+  sweep=(now/2400*Math.PI*2)%(Math.PI*2);
+  const g=cx.createConicGradient?cx.createConicGradient(sweep-0.6,c,c):null;
+  if(g){g.addColorStop(0,"rgba(255,138,31,0)");g.addColorStop(0.095,"rgba(255,138,31,.22)");g.addColorStop(0.1,"rgba(255,138,31,0)");
+    cx.fillStyle=g;cx.beginPath();cx.arc(c,c,R,0,7);cx.fill();}
+  cx.fillStyle="#6f8790";cx.font=(9*dp)+"px ui-monospace,monospace";
+  ["-40","-60","-80"].forEach((t,i)=>cx.fillText(t,c+4*dp,c-R*(i+1)/4-3*dp));
+  for(const d of S.devs.values()){
+    if(isHome(d.type)&&!opt.home) continue;
+    const age=(now-d.seen)/1000; if(age>60) continue;
+    const dist=Math.min(1,Math.max(0.08,(-d.rssi-30)/65));
+    const x=c+Math.cos(d.ang)*R*dist,y=c+Math.sin(d.ang)*R*dist;
+    const known=S.known.has(d.id), fade=Math.max(0.15,1-age/60);
+    const big=d.type&&!known;
+    cx.globalAlpha=fade*(big?1:0.45);
+    cx.fillStyle=d.type?COL[d.type]:(d.src==="W"?"#b84040":"#3a62b8");
+    cx.beginPath();cx.arc(x,y,(big?6:3)*dp,0,7);cx.fill();
+    if(big&&ALERT[d.type]){cx.strokeStyle=COL[d.type];cx.beginPath();cx.arc(x,y,(9+3*Math.sin(now/200))*dp,0,7);cx.stroke();}
+    if(big){cx.globalAlpha=fade;cx.fillStyle="#d9e6ea";cx.fillText(LABEL[d.type],x+9*dp,y+3*dp);}
+  }
+  cx.globalAlpha=1;cx.fillStyle="#ff8a1f";cx.beginPath();cx.arc(c,c,3*dp,0,7);cx.fill();
+}
+$("#key").innerHTML=LABEL.map((l,i)=>i?`<span><i style="background:${COL[i]}"></i>${l}</span>`:"").join("");
+
+/* ---------- lists ---------- */
+let filt="W";
+const ago=t=>{const s=(Date.now()-t)/1000|0;return s<60?s+"s":s<3600?(s/60|0)+"m":(s/3600|0)+"h";};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]);
+function row(d,extra){
+  const c=d.type?COL[d.type]:"#6f8790",pct=Math.min(100,Math.max(0,(d.rssi+100)*1.6));
+  return `<div class="row" data-id="${esc(d.id)}"><span class="tag" style="color:${c};border-color:${c}">${d.type?LABEL[d.type]:(d.src==="W"?"WIFI":"BLE")}</span>
+  <div class="nm"><div>${esc(d.name||"(no name)")}${S.known.has(d.id)?" <small>· known</small>":""}</div><small>${esc(d.id)}${d.ch&&d.src==="W"?" · ch "+d.ch:""}${extra||""}</small>
+  <div class="bar"><i style="width:${pct}%;background:${c}"></i></div></div><span class="rs">${d.rssi} dBm</span></div>`;
+}
+function renderList(now){
+  const a=[...S.devs.values()].filter(d=>now-d.seen<60000&&(filt==="*"||d.src===filt))
+    .sort((x,y)=>(ALERT[y.type]-ALERT[x.type])||(!!y.type-!!x.type)||(y.rssi-x.rssi));
+  $("#list").innerHTML=a.length?a.map(d=>row(d)).join(""):`<div class="empty">Nothing heard yet</div>`;
+}
+function renderAlerts(now){
+  const live=[...S.devs.values()].filter(d=>ALERT[d.type]&&now-d.seen<30000).sort((x,y)=>y.rssi-x.rssi);
+  $("#live").innerHTML=live.length?live.map(d=>row(d," · "+ago(d.seen))).join(""):`<div class="empty">No active threats</div>`;
+  $("#log").innerHTML=S.log.length?S.log.slice(0,100).map(e=>row(e," · "+new Date(e.t).toLocaleTimeString())).join(""):`<div class="empty">Log is empty</div>`;
+}
+/* hold a row → mark as known */
+let holdT=0;
+document.addEventListener("pointerdown",e=>{const r=e.target.closest(".row[data-id]");if(!r)return;
+  holdT=setTimeout(()=>{const id=r.dataset.id;S.known.has(id)?S.known.delete(id):S.known.add(id);save("sentinel.known",[...S.known]);
+    if(navigator.vibrate)navigator.vibrate(30);},600);});
+["pointerup","pointercancel","pointermove"].forEach(t=>document.addEventListener(t,()=>clearTimeout(holdT)));
+
+/* ---------- header + loop ---------- */
+function renderHeader(now){
+  if(now-S.rateT>=3000){S.rate=Math.round(S.cnt*1000/(now-S.rateT));S.cnt=0;S.rateT=now;}
+  const on=now-S.last<6000;
+  const pl=$("#pLink");pl.textContent=on?"LINKED":(S.last?"LOST":"NO LINK");pl.className="pill "+(on?"on":S.last?"bad":"");
+  $("#pVer").textContent="CYD "+(S.ver?"v"+S.ver:"--")+(on?(S.wifi?" W":"")+(S.ble?" B":""):"");
+  let n=0,t=0;for(const d of S.devs.values())if(now-d.seen<60000){n++;if(ALERT[d.type]&&!S.known.has(d.id))t++;}
+  $("#sDev").textContent=n;$("#sThr").textContent=t;$("#sThr").style.color=t?"var(--red)":"";
+  $("#sPh").textContent=S.phones>=0?S.phones:"--";$("#sPkt").textContent=S.rate;
+}
+let view="vRadar",slow=0;
+function loop(now){
+  if(view==="vRadar") drawRadar(now);
+  if(now-slow>700){slow=now;const t=Date.now();renderHeader(t);
+    if(view==="vList")renderList(t);if(view==="vAlerts")renderAlerts(t);
+    for(const [k,d] of S.devs) if(t-d.seen>300000) S.devs.delete(k);}
+  requestAnimationFrame(loop);
+}
+
+/* ---------- wiring ---------- */
+document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".tabs button").forEach(x=>x.classList.toggle("on",x===b));
+  document.querySelectorAll("section").forEach(s=>s.classList.toggle("show",s.id===b.dataset.v));
+  view=b.dataset.v;slow=0;if(view==="vRadar")fit();});
+document.querySelectorAll(".sub button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".sub button").forEach(x=>x.classList.toggle("on",x===b));filt=b.dataset.f;slow=0;});
+$("#connect").onclick=connect;
+$("#demo").onclick=()=>{try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();ac.resume();}catch(e){}demoT?stopDemo():startDemo();};
+$("#clearLog").onclick=()=>{S.log=[];save("sentinel.log",S.log);slow=0;};
+$("#pop").onclick=()=>$("#pop").classList.remove("show");
+[["optSound","sound"],["optHome","home"],["optWake","wake"]].forEach(([id,k])=>{const el=$("#"+id);el.checked=opt[k];
+  el.onchange=()=>{opt[k]=el.checked;save("sentinel.opt",opt);if(k==="wake"&&el.checked)wake();};});
+fit();requestAnimationFrame(loop);
+</script>
+</body>
+</html>
