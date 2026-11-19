@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="robots" content="noindex,nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0e1517">
+<title>Sentinel GPS Beacon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{--bg:#0e1517;--panel:#141d20;--panel2:#1a2528;--line:#24474a;--fg:#d9e4e2;--muted:#83999a;
+  --accent:#ff8a1f;--ok:#4fd1a1;--crit:#ff5a5a;--f:"IBM Plex Mono",ui-monospace,monospace;--fd:"Chakra Petch",sans-serif;color-scheme:dark}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--fg);font-family:var(--f);font-size:15px}
+.wrap{max-width:460px;margin:0 auto;padding:22px 18px calc(22px + env(safe-area-inset-bottom))}
+h1{font-family:var(--fd);font-size:1.15rem;letter-spacing:.14em;text-transform:uppercase;margin:0 0 4px}
+.sub{color:var(--muted);font-size:.82rem;margin:0 0 18px;line-height:1.5}
+label{display:block;font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:10px 0 4px}
+input{width:100%;font:inherit;color:inherit;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:11px 12px}
+input:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button{width:100%;margin-top:14px;font-family:var(--fd);letter-spacing:.08em;text-transform:uppercase;font-weight:700;
+  font-size:.9rem;padding:13px;border:0;border-radius:6px;background:var(--accent);color:#1a0d00;cursor:pointer}
+button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg);font-weight:600}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-top:16px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--muted);margin-right:8px;vertical-align:middle}
+.dot.on{background:var(--ok);box-shadow:0 0 10px var(--ok)}
+.dot.err{background:var(--crit)}
+.big{font-family:var(--fd);font-size:1.5rem;letter-spacing:.04em;margin:6px 0}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;font-size:.82rem;margin-top:10px}
+.kv dt{color:var(--muted);text-transform:uppercase;font-size:.68rem;letter-spacing:.08em;padding-top:2px}
+.kv dd{margin:0}
+.msg{margin-top:10px;font-size:.8rem;color:var(--muted);min-height:1.2em;word-break:break-word}
+.msg.err{color:var(--crit)}.msg.ok{color:var(--ok)}
+.hide{display:none}
+.note{color:var(--muted);font-size:.74rem;line-height:1.5;margin-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Sentinel GPS Beacon</h1>
+  <p class="sub">Keep this open on the phone you carry with the scanner. It streams this phone's GPS to the Sentinel Log so detections from the GPS-less tablet get stamped with where you actually are.</p>
+
+  <div id="auth">
+    <label for="em">Upload account email</label>
+    <input id="em" type="email" autocomplete="username" placeholder="sentinel-upload@spectre.com">
+    <label for="pw">Password</label>
+    <input id="pw" type="password" autocomplete="current-password" placeholder="Password">
+    <button id="inBtn">Sign in &amp; start beacon</button>
+    <div class="msg" id="authMsg" role="status"></div>
+  </div>
+
+  <div id="live" class="hide">
+    <div class="card">
+      <div><span class="dot" id="dot"></span><span id="state">starting…</span></div>
+      <div class="big mono" id="coords">—</div>
+      <dl class="kv">
+        <dt>Accuracy</dt><dd id="acc">—</dd>
+        <dt>Last fix</dt><dd id="fix">—</dd>
+        <dt>Last upload</dt><dd id="up">—</dd>
+        <dt>Account</dt><dd id="who">—</dd>
+      </dl>
+      <div class="msg" id="liveMsg" role="status"></div>
+    </div>
+    <button class="ghost" id="outBtn">Stop &amp; sign out</button>
+    <p class="note">Keep the screen on and this tab in front — iOS pauses GPS when the screen locks. Leave it plugged in on long runs. The tablet picks up this location within ~30&nbsp;seconds.</p>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+(function(){
+  const $=id=>document.getElementById(id);
+  const cfg=window.SENTINEL_CONFIG||{};
+  if(!window.supabase||!cfg.supabaseUrl||!cfg.supabaseKey){ $("authMsg").textContent="Not configured (config.js)."; $("authMsg").className="msg err"; return; }
+  const sb=window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey);
+
+  let watchId=null, lastSent=0, wakeLock=null, lastPos=null;
+  const MIN_INTERVAL=4000;   // at most one upload every 4 s
+  const MOVE_MIN=4;          // or sooner if moved >4 m
+
+  function meters(a,b){ const R=6371000,toR=Math.PI/180,dLat=(b.lat-a.lat)*toR,dLng=(b.lng-a.lng)*toR;
+    const h=Math.sin(dLat/2)**2+Math.cos(a.lat*toR)*Math.cos(b.lat*toR)*Math.sin(dLng/2)**2; return 2*R*Math.asin(Math.sqrt(h)); }
+
+  async function signIn(){
+    const email=$("em").value.trim(), password=$("pw").value;
+    if(!email||!password){ msg("authMsg","Enter the upload account email and password.",true); return; }
+    msg("authMsg","Signing in…");
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if(error){ msg("authMsg",error.message,true); return; }
+    $("pw").value="";
+    $("who").textContent=data.user.email;
+    start();
+  }
+
+  async function start(){
+    $("auth").classList.add("hide"); $("live").classList.remove("hide");
+    try{ if("wakeLock" in navigator) wakeLock=await navigator.wakeLock.request("screen"); }catch(e){}
+    document.addEventListener("visibilitychange",async()=>{ if(document.visibilityState==="visible"){ try{ if("wakeLock" in navigator) wakeLock=await navigator.wakeLock.request("screen"); }catch(e){} }});
+    if(!navigator.geolocation){ setState("No geolocation on this device","err"); return; }
+    setState("Waiting for GPS…","");
+    watchId=navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy:true, maximumAge:2000, timeout:20000 });
+  }
+
+  function onPos(p){
+    const lat=p.coords.latitude, lng=p.coords.longitude, acc=p.coords.accuracy;
+    $("coords").textContent=lat.toFixed(5)+", "+lng.toFixed(5);
+    $("acc").textContent="±"+Math.round(acc)+" m";
+    $("fix").textContent=new Date().toLocaleTimeString();
+    setState("Tracking","on");
+    const now=Date.now();
+    const moved=lastPos?meters(lastPos,{lat,lng}):Infinity;
+    if(now-lastSent>=MIN_INTERVAL && (moved>=MOVE_MIN || now-lastSent>=15000)){ lastPos={lat,lng}; push(lat,lng,acc); }
+  }
+  function onErr(e){ setState(e.code===1?"Location permission denied":"GPS error","err"); msg("liveMsg",e.message||"",true); }
+
+  async function push(lat,lng,acc){
+    lastSent=Date.now();
+    const { error } = await sb.from("live_location").upsert(
+      { device:"beacon", lat, lng, accuracy_m:Math.round(acc) }, { onConflict:"device" });
+    if(error){ msg("liveMsg","Upload: "+error.message,true); }
+    else { $("up").textContent=new Date().toLocaleTimeString(); msg("liveMsg","",false); }
+  }
+
+  function setState(t,cls){ $("state").textContent=t; $("dot").className="dot"+(cls?" "+cls:""); }
+  function msg(id,t,err){ const m=$(id); m.textContent=t; m.className="msg"+(err?" err":""); }
+
+  $("inBtn").onclick=signIn;
+  $("em").addEventListener("keydown",e=>{ if(e.key==="Enter") $("pw").focus(); });
+  $("pw").addEventListener("keydown",e=>{ if(e.key==="Enter") signIn(); });
+  $("outBtn").onclick=async()=>{ if(watchId!=null) navigator.geolocation.clearWatch(watchId); try{ if(wakeLock) wakeLock.release(); }catch(e){} await sb.auth.signOut(); location.reload(); };
+
+  sb.auth.getSession().then(({data:{session}})=>{ if(session){ $("who").textContent=session.user.email; start(); } });
+})();
+</script>
+</body>
+</html>

@@ -172,3 +172,37 @@ begin
   alter publication supabase_realtime add table public.sightings;
 exception when duplicate_object then null;
 end $$;
+
+-- ----------------------------------------------------------------------------
+-- Live location beacon: a phone with GPS (beacon.html) upserts its current
+-- position here; the GPS-less tablet reads the latest row and stamps detections.
+create table if not exists public.live_location (
+  device      text primary key,
+  lat         double precision not null check (lat between -90 and 90),
+  lng         double precision not null check (lng between -180 and 180),
+  accuracy_m  real check (accuracy_m >= 0),
+  ts          timestamptz not null default now(),
+  updated_by  uuid references auth.users(id) on delete set null
+);
+alter table public.live_location enable row level security;
+
+create or replace function public.live_location_touch()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin new.ts := now(); new.updated_by := auth.uid(); return new; end;
+$$;
+drop trigger if exists live_location_touch on public.live_location;
+create trigger live_location_touch before insert or update on public.live_location
+  for each row execute function public.live_location_touch();
+
+revoke all on public.live_location from anon, public;
+grant select, insert, update on public.live_location to authenticated;
+
+drop policy if exists "members read live_location"   on public.live_location;
+drop policy if exists "members add live_location"     on public.live_location;
+drop policy if exists "members update live_location"  on public.live_location;
+create policy "members read live_location" on public.live_location
+  for select to authenticated using (public.can_upload());
+create policy "members add live_location" on public.live_location
+  for insert to authenticated with check (public.can_upload());
+create policy "members update live_location" on public.live_location
+  for update to authenticated using (public.can_upload()) with check (public.can_upload());
