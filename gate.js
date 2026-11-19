@@ -26,17 +26,17 @@
     }
     const box=g.querySelector(".box");
     if(state==="signin"){
-      box.innerHTML='<h1 id="sgateH">Sentinel</h1><p>Private. Sign in with an approved email and you\'ll get a one-time link.</p>'+
+      box.innerHTML='<h1 id="sgateH">Sentinel</h1><p>Private. Sign in with your approved account.</p>'+
         '<form id="sgForm"><input id="sgEmail" type="email" autocomplete="email" placeholder="you@example.com" aria-label="Email" required>'+
-        '<button type="submit">Send sign-in link</button></form><span class="msg" id="sgMsg" role="status"></span>';
+        '<input id="sgPass" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" required>'+
+        '<button type="submit">Sign in</button></form><span class="msg" id="sgMsg" role="status"></span>';
       box.querySelector("#sgForm").addEventListener("submit",async e=>{
         e.preventDefault();
-        const m=box.querySelector("#sgMsg"); m.className="msg"; m.textContent="Sending…";
-        const { error } = await sb.auth.signInWithOtp({ email: box.querySelector("#sgEmail").value.trim(),
-          options:{ emailRedirectTo: location.origin+location.pathname, shouldCreateUser:false } });
-        // Same answer whether or not the address exists, so the form can't be used to probe accounts.
-        if(error && !/signups not allowed|not found|otp_disabled/i.test(error.message)){ m.className="msg err"; m.textContent=error.message; return; }
-        m.className="msg ok"; m.textContent="If that address is approved, a link is on its way.";
+        const m=box.querySelector("#sgMsg"); m.className="msg"; m.textContent="Signing in…";
+        const { error } = await sb.auth.signInWithPassword({ email: box.querySelector("#sgEmail").value.trim(),
+          password: box.querySelector("#sgPass").value });
+        if(error){ m.className="msg err"; m.textContent=error.message; return; }
+        // Success: onAuthStateChange fires with the session and the gate resolves.
       });
     } else {
       box.innerHTML='<h1 id="sgateH">Sentinel</h1><p>'+text+'</p><button type="button" class="ghost" id="sgOut">Sign out</button>';
