@@ -95,6 +95,8 @@ select:focus,input:focus,button:focus-visible{outline:2px solid var(--accent);ou
 .leaflet-control-layers-toggle{filter:invert(.85)}
 .leaflet-control-layers-expanded{padding:8px 10px}
 .leaflet-control-attribution a{color:var(--muted)}
+@keyframes atkPulse{0%{stroke-opacity:.9;fill-opacity:.18}100%{stroke-opacity:.15;fill-opacity:0}}
+.atkPulse{animation:atkPulse 1.2s ease-out infinite}
 .dfStat{background:var(--panel);color:var(--muted);border:1px solid var(--line);border-radius:2px;padding:4px 8px;font-family:var(--f-mono);font-size:.72rem;pointer-events:none}
 .dfStat.err{color:var(--crit)}
 .dfKey{display:inline-block;width:9px;height:9px;border-radius:50%;border:2px solid #fff;margin:0 4px 0 2px;vertical-align:-1px}
@@ -131,6 +133,12 @@ select:focus,input:focus,button:focus-visible{outline:2px solid var(--accent);ou
     <section class="sec" id="detailSec" hidden>
       <div class="row" style="justify-content:space-between"><h2>Device</h2><button type="button" id="detClose">Close</button></div>
       <div id="detail"></div>
+    </section>
+
+    <section class="sec">
+      <h2>Attacks</h2>
+      <p class="hint">Deauth floods and hacking tools. Repeat attackers (heard on more than one occasion) are marked, and a deauth names the network it hit.</p>
+      <ul class="list" id="atkList"></ul>
     </section>
 
     <section class="sec">
@@ -193,6 +201,19 @@ const CATS = [
 const COLOR = Object.fromEntries(CATS);
 // Things bolted to a pole or a wall: estimated position, never "following" you.
 const FIXED = new Set(["Flock","ALPR","IP camera","Ring","Blink","Govee / smart home","Skimmer"]);
+// Attacks: always drawn on top, tracks always on, linked to their target and to earlier encounters.
+const ATTACK = new Set(["Deauth attack","Flipper / hacking tool"]);
+const ATK_RECENT_MS = 15*60000;
+let atkSvg=null;   // the pulse ring needs SVG (the map otherwise draws on canvas)
+// "target: HomeNet (AA:BB:CC:DD:EE:FF)" or "target BSSID ..:AABBCC" written by the tablet into a deauth's notes
+function parseTarget(note){
+  if(!note) return null;
+  let m=note.match(/target: (.*?) \(([0-9A-Fa-f:]{17})\)/);
+  if(m) return { name:m[1], mac:m[2].toUpperCase() };
+  m=note.match(/target BSSID \.\.:([0-9A-Fa-f]{6})/);
+  if(m){ const h=m[1].toUpperCase(); return { name:null, suffix:h.slice(0,2)+":"+h.slice(2,4)+":"+h.slice(4,6) }; }
+  return null;
+}
 const $ = id => document.getElementById(id);
 const esc = s => String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const store = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } },
@@ -378,6 +399,7 @@ function build(){
     if(!d){ d={ key:k, fuzzy:k.startsWith("fp|"), macs:new Set(), cat:r.category, kind:r.kind, name:r.name, vendor:r.vendor, pts:[] }; m.set(k,d); }
     d.macs.add(r.mac); if(!d.name&&r.name) d.name=r.name; if(!d.vendor&&r.vendor) d.vendor=r.vendor;
     d.pts.push({ lat:r.lat, lng:r.lng, t:new Date(r.ts).getTime(), rssi:r.rssi, loc:r.location, src:r.source, conf:r.confidence });
+    if(ATTACK.has(r.category)){ const tg=parseTarget(r.notes); if(tg) d.target=tg; }
   }
   devices=[...m.values()].map(d=>{
     d.pts.sort((a,b)=>a.t-b.t);
@@ -389,8 +411,18 @@ function build(){
     d.mine=mine.has(d.key);
     d.follower = !d.fixed && !d.mine && d.places.length>=T.places && far>=T.spread && (d.last-d.first)>=T.span;
     if(d.fixed) d.spot=weightedSpot(d.pts);
+    d.attack = ATTACK.has(d.cat);
+    d.repeat = d.attack && d.pts.length>=2;            // each row is a separate encounter (uploads dedupe 10 min)
+    if(d.attack && !d.target && d.cat==="Deauth attack"){    // older rows: target suffix is in the synthetic MAC 02:DE:A0:xx:xx:xx
+      const m=[...d.macs][0]||""; if(m.startsWith("02:DE:A0:")) d.target={ name:null, suffix:m.slice(9) };
+    }
     return d;
   });
+  // resolve each deauth's target to a device on the map when we have one
+  for(const d of devices){
+    if(!d.target) continue;
+    d.targetDev = devices.find(x=>x!==d && [...x.macs].some(m=> d.target.mac ? m===d.target.mac : m.slice(9)===d.target.suffix)) || null;
+  }
 }
 
 // ---------- render ----------
@@ -442,19 +474,50 @@ function draw(){
       });
     }
   }
+  // attacks: drawn last so nothing covers them
+  for(const d of devices){
+    if(!d.attack || !visible(d)) continue;
+    const pts=d.pts.filter(p=>p.t<=cut); if(!pts.length) continue;
+    const last=pts[pts.length-1], recent=(cut===Infinity?Date.now():cut)-last.t < ATK_RECENT_MS;
+    if(pts.length>1) L.polyline(pts.map(p=>[p.lat,p.lng]),{color:"#ff2a2a",weight:2.5,opacity:.85,dashArray:"2 6",interactive:false}).addTo(layer);
+    if(d.targetDev){
+      const t=d.targetDev, tp=t.fixed?[t.spot.lat,t.spot.lng]:[t.pts[t.pts.length-1].lat,t.pts[t.pts.length-1].lng];
+      L.polyline([[last.lat,last.lng],tp],{color:"#ff2a2a",weight:2,opacity:.9,dashArray:"6 5",interactive:false}).addTo(layer);
+      L.circleMarker(tp,{radius:11,color:"#ff2a2a",weight:2,fill:false,interactive:false}).addTo(layer);
+    }
+    if(recent) L.circleMarker([last.lat,last.lng],{radius:16,color:"#ff2a2a",weight:2,opacity:.8,fillOpacity:.12,className:"atkPulse",interactive:false,renderer:(atkSvg=atkSvg||L.svg())}).addTo(layer);
+    if(d.repeat){
+      L.circleMarker([last.lat,last.lng],{radius:11,color:"#ff2a2a",weight:2,fill:false,interactive:false}).addTo(layer);
+      L.circleMarker([last.lat,last.lng],{radius:14,color:"#ff2a2a",weight:1.5,fill:false,interactive:false}).addTo(layer);
+    }
+    L.circleMarker([last.lat,last.lng],{radius:8,color:"#0b1113",weight:2,fillColor:COLOR[d.cat]||"#ff2a2a",fillOpacity:1})
+      .bindPopup(pop(d,pts,last)).on("click",()=>select(d.key,false)).addTo(layer);
+  }
   $("sDev").textContent=nDev; $("sSee").textContent=nSee; $("sFol").textContent=nFol;
   $("railBtn").textContent = nFol ? "Intel · "+nFol+" ⚠" : "Intel"; $("railBtn").style.color = nFol ? "var(--crit)" : "";
   if(!fitted && bounds.length){ map.fitBounds(bounds,{padding:[30,30],maxZoom:15}); fitted=true; }
 }
+function targetText(d){
+  if(!d.target) return "";
+  const n=d.target.name||(d.targetDev&&d.targetDev.name)||null;
+  return (n?esc(n)+" ":"")+'<span class="mono">'+esc(d.target.mac||("..:"+d.target.suffix))+'</span>';
+}
 function pop(d,pts,p){
   const base='<b>'+esc(label(d))+'</b><br><span style="color:'+(COLOR[d.cat]||"#999")+'">'+esc(d.cat)+'</span> · '+esc(d.kind)+
-    (d.follower?' · <span style="color:#ff3b3b">POSSIBLE FOLLOWER</span>':'')+'<br>';
+    (d.follower?' · <span style="color:#ff3b3b">POSSIBLE FOLLOWER</span>':'')+
+    (d.repeat?' · <span style="color:#ff2a2a">REPEAT ×'+d.pts.length+'</span>':'')+'<br>'+
+    (d.target?'Hit: '+targetText(d)+'<br>':'');
   if(p) return base+fmt(p.t)+(p.rssi!=null?' · '+p.rssi+' dBm':'')+(p.loc?'<br>'+esc(p.loc):'')+'<br>'+pts.length+' sightings here and elsewhere';
   return base+'Estimated from '+pts.length+' sightings<br>Last '+fmt(pts[pts.length-1].t);
 }
 
 function lists(){
   const vis=devices.filter(visible);
+  const atk=vis.filter(d=>d.attack).sort((a,b)=>b.last-a.last);
+  $("atkList").innerHTML = atk.length ? atk.map(d=>'<li data-k="'+esc(d.key)+'" class="alert '+(selected===d.key?"sel":"")+'"><span class="sw" style="background:'+(COLOR[d.cat]||"#ff2a2a")+'"></span>'+
+    '<span class="t">'+esc(label(d))+'<span class="s">'+esc(d.cat)+(d.target?' · hit '+(d.target.name?esc(d.target.name):esc(d.target.mac||"..:"+d.target.suffix)):'')+' · last '+esc(fmt(d.last))+'</span></span>'+
+    '<span class="n">'+(d.repeat?"×"+d.pts.length:"1")+'</span></li>').join("") :
+    '<li class="empty" style="display:block;cursor:default">No attacks in this window.</li>';
   const fol=vis.filter(d=>d.follower).sort((a,b)=>b.places.length-a.places.length||b.last-a.last);
   $("folList").innerHTML = fol.length ? fol.map(d=>item(d,true)).join("") : '<li class="empty" style="display:block;cursor:default">Nothing has tailed you in this window.</li>';
   const all=vis.slice().sort((a,b)=>b.last-a.last).slice(0,200);
@@ -479,6 +542,8 @@ function detail(){
       '<dt>Category</dt><dd>'+esc(d.cat)+' · '+esc(d.kind)+'</dd>'+
       '<dt>'+(d.macs.size>1?"MACs":"MAC")+'</dt><dd class="mono">'+[...d.macs].slice(0,6).map(esc).join("<br>")+(d.macs.size>6?"<br>+"+(d.macs.size-6)+" more":"")+'</dd>'+
       '<dt>Vendor</dt><dd>'+esc(d.vendor||"—")+'</dd>'+
+      (d.target?'<dt>Hit</dt><dd>'+targetText(d)+(d.targetDev?'':' <span style="color:var(--muted)">(network not in log)</span>')+'</dd>':'')+
+      (d.attack?'<dt>Encounters</dt><dd>'+d.pts.length+(d.repeat?' <span style="color:#ff2a2a">repeat attacker</span>':'')+'</dd>':'')+
       '<dt>Seen</dt><dd>'+d.pts.length+' times at '+d.places.length+' place'+(d.places.length===1?"":"s")+(d.far?', '+(d.far/1000).toFixed(1)+' km apart':'')+'</dd>'+
       '<dt>First</dt><dd>'+esc(fmt(d.first))+'</dd><dt>Last</dt><dd>'+esc(fmt(d.last))+'</dd>'+
       (d.fixed?'<dt>Est. spot</dt><dd class="mono">'+d.spot.lat.toFixed(5)+', '+d.spot.lng.toFixed(5)+' ±'+Math.round(d.spot.spread)+' m</dd>':'')+
@@ -514,7 +579,7 @@ async function load(){
   setStatus("Loading…");
   const out=[]; const page=1000;
   for(let from=0; from<20000; from+=page){
-    let q=sb.from("sightings").select("ts,kind,mac,random_mac,name,category,confidence,rssi,vendor,source,location,lat,lng")
+    let q=sb.from("sightings").select("ts,kind,mac,random_mac,name,category,confidence,rssi,vendor,source,location,lat,lng,notes")
       .not("lat","is",null).not("lng","is",null).order("ts",{ascending:true}).range(from,from+page-1);
     if(hrs) q=q.gte("ts",new Date(Date.now()-hrs*3600e3).toISOString());
     const { data, error } = await q;
@@ -538,7 +603,7 @@ $("catAll").onclick=()=>{ catsOn=new Set(CATS.map(c=>c[0])); store.set("sm.cats"
 $("catNone").onclick=()=>{ catsOn=new Set(); store.set("sm.cats",[]); chips(); draw(); lists(); };
 $("tracksBtn").onclick=e=>{ showTracks=!showTracks; e.currentTarget.classList.toggle("on",showTracks); e.currentTarget.setAttribute("aria-pressed",showTracks); draw(); };
 $("mineBtn").onclick=e=>{ showMine=!showMine; e.currentTarget.classList.toggle("on",showMine); e.currentTarget.setAttribute("aria-pressed",showMine); draw(); lists(); };
-["folList","devList"].forEach(id=>$(id).addEventListener("click",e=>{ const li=e.target.closest("[data-k]"); if(li) select(li.dataset.k,true); }));
+["atkList","folList","devList"].forEach(id=>$(id).addEventListener("click",e=>{ const li=e.target.closest("[data-k]"); if(li) select(li.dataset.k,true); }));
 $("detClose").onclick=()=>{ selected=null; draw(); lists(); detail(); };
 $("scrub").addEventListener("input",draw);
 $("playBtn").onclick=()=>{
