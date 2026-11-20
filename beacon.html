@@ -68,6 +68,13 @@ button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg)
       </dl>
       <div class="msg" id="liveMsg" role="status"></div>
     </div>
+    <button id="gpsBtn" class="hide">Turn on GPS</button>
+    <div class="note hide" id="gpsHelp">
+      <b>Location is blocked for this app.</b> On iPhone, apps saved to the home screen use Safari's location setting:<br>
+      1. Settings › Privacy &amp; Security › Location Services: on.<br>
+      2. In that list, <b>Safari Websites</b> › <b>While Using the App</b>, and turn on <b>Precise Location</b>.<br>
+      3. Come back here and tap <b>Turn on GPS</b>. If it still says blocked, delete the home-screen icon, open the page in Safari, allow location there, then Share › Add to Home Screen again.
+    </div>
     <button class="ghost" id="outBtn">Stop &amp; sign out</button>
     <p class="note">Keep the screen on and this tab in front — iOS pauses GPS when the screen locks. Leave it plugged in on long runs. The tablet picks up this location within ~30&nbsp;seconds.</p>
   </div>
@@ -105,6 +112,16 @@ button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg)
     try{ if("wakeLock" in navigator) wakeLock=await navigator.wakeLock.request("screen"); }catch(e){}
     document.addEventListener("visibilitychange",async()=>{ if(document.visibilityState==="visible"){ try{ if("wakeLock" in navigator) wakeLock=await navigator.wakeLock.request("screen"); }catch(e){} }});
     if(!navigator.geolocation){ setState("No geolocation on this device","err"); return; }
+    // iPhone home-screen apps only show the location prompt for a request that comes from a tap, so unless
+    // location is already granted, wait for the Turn on GPS button instead of asking on page load.
+    let st="prompt";
+    try{ if(navigator.permissions&&navigator.permissions.query) st=(await navigator.permissions.query({name:"geolocation"})).state; }catch(e){}
+    if(st==="granted") beginWatch();
+    else { setState(st==="denied"?"Location blocked":"Tap Turn on GPS","err"); $("gpsBtn").classList.remove("hide"); if(st==="denied") $("gpsHelp").classList.remove("hide"); }
+  }
+  function beginWatch(){
+    if(watchId!=null) navigator.geolocation.clearWatch(watchId);
+    $("gpsBtn").classList.add("hide"); $("gpsHelp").classList.add("hide");
     setState("Waiting for GPS…","");
     watchId=navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy:true, maximumAge:2000, timeout:20000 });
   }
@@ -119,7 +136,15 @@ button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg)
     const moved=lastPos?meters(lastPos,{lat,lng}):Infinity;
     if(now-lastSent>=MIN_INTERVAL && (moved>=MOVE_MIN || now-lastSent>=15000)){ lastPos={lat,lng}; push(lat,lng,acc); }
   }
-  function onErr(e){ setState(e.code===1?"Location permission denied":"GPS error","err"); msg("liveMsg",e.message||"",true); }
+  function onErr(e){
+    if(e.code===1){                                   // denied: show the fix and the button again
+      if(watchId!=null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+      setState("Location blocked","err"); msg("liveMsg","",false);
+      $("gpsBtn").classList.remove("hide"); $("gpsHelp").classList.remove("hide");
+      return;
+    }
+    setState(e.code===3?"No GPS fix yet, still trying…":"GPS error","err"); msg("liveMsg",e.message||"",true);
+  }
 
   async function push(lat,lng,acc){
     lastSent=Date.now();
@@ -133,6 +158,7 @@ button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg)
   function msg(id,t,err){ const m=$(id); m.textContent=t; m.className="msg"+(err?" err":""); }
 
   $("inBtn").onclick=signIn;
+  $("gpsBtn").onclick=beginWatch;                       // a real tap: iOS will show the location prompt
   $("em").addEventListener("keydown",e=>{ if(e.key==="Enter") $("pw").focus(); });
   $("pw").addEventListener("keydown",e=>{ if(e.key==="Enter") signIn(); });
   $("outBtn").onclick=async()=>{ if(watchId!=null) navigator.geolocation.clearWatch(watchId); try{ if(wakeLock) wakeLock.release(); }catch(e){} await sb.auth.signOut(); location.reload(); };
