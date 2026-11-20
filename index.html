@@ -88,7 +88,15 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .toolbar input[type=search]{flex:1 1 220px}
 .toolbar select{flex:0 1 170px;width:auto}
 
-.tablebox{overflow-x:auto;border:1px solid var(--line-soft)}
+.tablebox{overflow:auto;overscroll-behavior:contain;border:1px solid var(--line-soft);scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+.tablebox thead th{position:sticky;top:0;z-index:1}
+/* Sightings panel matches the left column's height; rows scroll inside it */
+@media (min-width:901px){
+  .grid{align-items:stretch}
+  .grid > .panel[aria-labelledby="logH"]{contain:size;min-height:520px}
+  .grid > .panel[aria-labelledby="logH"] .tablebox{flex:1 1 0;min-height:0}
+}
+@media (max-width:900px){.tablebox{max-height:65vh}}
 table{border-collapse:collapse;width:100%;min-width:900px;font-size:.84rem}
 th{font-family:var(--f-display);font-weight:600;font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);background:var(--panel-2)}
 td{padding:8px 10px;border-bottom:1px solid var(--line-soft);vertical-align:top}
