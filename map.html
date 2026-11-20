@@ -154,6 +154,7 @@ select:focus,input:focus,button:focus-visible{outline:2px solid var(--accent);ou
         <select id="kind" aria-label="Radio"><option value="">WiFi + BLE</option><option>WiFi</option><option>BLE</option></select>
         <button type="button" id="tracksBtn" class="on" aria-pressed="true">Tracks</button>
         <button type="button" id="mineBtn" aria-pressed="false">Show mine</button>
+        <button type="button" id="locBtn" class="on" aria-pressed="true" title="Estimate where each WiFi device actually is">Est. spots</button>
       </div>
       <div class="chips" id="cats" role="group" aria-label="Categories"></div>
       <div class="row"><button type="button" id="catAll">All</button><button type="button" id="catNone">None</button></div>
@@ -222,7 +223,7 @@ const store = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d
 let sb=null, rows=[], devices=[], selected=null, playTimer=null;
 let catsOn = new Set(store.get("sm.cats", CATS.map(c=>c[0])));
 let mine = new Set(store.get("sm.mine", []));
-let showTracks = true, showMine = false;
+let showTracks = true, showMine = false, showLoc = true;
 
 // ---------- map ----------
 const map = L.map("map", { preferCanvas:true, zoomControl:true, worldCopyJump:true }).setView([38.04,-84.5], 9);
@@ -371,6 +372,61 @@ function clusterPlaces(pts, radius){
   }
   return places;
 }
+// ---------- WiFi geolocation ----------
+// Signal strength -> rough distance (log-distance path loss): -40 dBm ~ 1 m, n = 2.7 (suburban, through walls).
+const RSSI_1M = -40, PATH_N = 2.7, MOVING_M = 1500;
+function rssiMeters(rssi){ return Math.min(800, Math.max(3, 10 ** ((RSSI_1M - (rssi ?? -80)) / (10 * PATH_N)))); }
+// Where is the device itself? Trilateration: each sighting says "the device is about d meters from here"
+// (d from signal strength). Find the point that best fits all of those distances (weighted least squares,
+// strong close readings count most), tried from several starting points so it can't get stuck.
+// If every sighting lies along one straight road, the device could be on either side of it: the answer
+// stays on the road and the radius covers both sides, instead of pretending to know.
+function toXY(o,p){ const k=111320; return [(p.lng-o.lng)*k*Math.cos(o.lat*Math.PI/180), (p.lat-o.lat)*k]; }
+function toLL(o,x,y){ const k=111320; return { lat:o.lat+y/k, lng:o.lng+x/(k*Math.cos(o.lat*Math.PI/180)) }; }
+function locate(pts){
+  if(!pts.length) return null;
+  const o=pts[0], P=pts.map(p=>{ const [x,y]=toXY(o,p), d=rssiMeters(p.rssi); return {x,y,d,w:1/(d*d)}; });
+  let W=0, cx=0, cy=0; for(const q of P){ W+=q.w; cx+=q.x*q.w; cy+=q.y*q.w; } cx/=W; cy/=W;
+  const spots=clusterPlaces(pts, 25).length, best=Math.min(...P.map(q=>q.d));
+  // how "straight" are the vantage points? (weighted PCA: minor-axis spread)
+  let sxx=0, syy=0, sxy=0; for(const q of P){ const dx=q.x-cx, dy=q.y-cy; sxx+=q.w*dx*dx; syy+=q.w*dy*dy; sxy+=q.w*dx*dy; }
+  sxx/=W; syy/=W; sxy/=W;
+  const tr=sxx+syy, det=sxx*syy-sxy*sxy, minor=Math.sqrt(Math.max(0, tr/2-Math.sqrt(Math.max(0, tr*tr/4-det))));
+  const cost=(x,y)=>{ let c=0; for(const q of P){ const e=Math.hypot(x-q.x,y-q.y)-q.d; c+=q.w*e*e; } return c; };
+  function solve(x,y){
+    for(let it=0; it<60; it++){                                   // Gauss-Newton with step halving
+      let a11=0,a12=0,a22=0,b1=0,b2=0;
+      for(const q of P){ const r=Math.max(.5,Math.hypot(x-q.x,y-q.y)), ux=(x-q.x)/r, uy=(y-q.y)/r, e=r-q.d;
+        a11+=q.w*ux*ux; a12+=q.w*ux*uy; a22+=q.w*uy*uy; b1+=q.w*ux*e; b2+=q.w*uy*e; }
+      const D=a11*a22-a12*a12; if(Math.abs(D)<1e-12) break;
+      let dx=-( a22*b1-a12*b2)/D, dy=-(-a12*b1+a11*b2)/D, c0=cost(x,y), t=1;
+      while(t>1/64 && cost(x+dx*t,y+dy*t)>c0) t/=2;
+      x+=dx*t; y+=dy*t; if(Math.hypot(dx*t,dy*t)<.05) break;
+    }
+    return [x,y];
+  }
+  let bx=cx, by=cy, bc=cost(cx,cy);
+  if(spots>=3 && minor>=12){                                      // vantage points spread in 2-D: trilateration can resolve it
+    for(let k=0;k<8;k++){ const a=k*Math.PI/4, [x,y]=solve(cx+Math.cos(a)*best, cy+Math.sin(a)*best), c=cost(x,y); if(c<bc){ bc=c; bx=x; by=y; } }
+  }
+  const resid=Math.sqrt(bc/W);
+  let r, conf, oneLine=false;
+  if(spots===1){ r=Math.max(12, best*1.6); conf="rough"; }
+  else if(spots<3 || minor<12){                                   // one straight pass: on the road, either side
+    oneLine=true; r=Math.max(15, best*1.25+resid); conf=spots>=3?"fair":"rough";
+  } else {
+    r=Math.max(10, resid*1.6 + 6 + 40/Math.sqrt(spots)); conf=spots>=5&&minor>=25?"good":"fair";
+  }
+  r=Math.min(800,r);
+  const c=toLL(o,bx,by);
+  return { lat:c.lat, lng:c.lng, r, spots, n:pts.length, conf, single: spots===1, oneLine };
+}
+// WiFi seen across a wide area is moving (hotspot in a car, phone): no fixed spot to find.
+function isMoving(pts){
+  for(let i=1;i<pts.length;i++) if(meters(pts[0],pts[i])>MOVING_M) return true;
+  return false;
+}
+
 function weightedSpot(pts){
   // Stronger signal = closer to the device. Weight by (rssi+100)^2, default -80 dBm.
   let W=0, lat=0, lng=0;
@@ -411,6 +467,8 @@ function build(){
     d.mine=mine.has(d.key);
     d.follower = !d.fixed && !d.mine && d.places.length>=T.places && far>=T.spread && (d.last-d.first)>=T.span;
     if(d.fixed) d.spot=weightedSpot(d.pts);
+    // WiFi gear that stays put gets an estimated location (cameras, routers, Flock...); moving hotspots don't
+    d.geo = (d.kind==="WiFi" || d.fixed) && !isMoving(d.pts) ? locate(d.pts) : null;
     d.attack = ATTACK.has(d.cat);
     d.repeat = d.attack && d.pts.length>=2;            // each row is a separate encounter (uploads dedupe 10 min)
     if(d.attack && !d.target && d.cat==="Deauth attack"){    // older rows: target suffix is in the synthetic MAC 02:DE:A0:xx:xx:xx
@@ -455,6 +513,26 @@ function draw(){
     const pts=d.pts.filter(p=>p.t<=cut); if(!pts.length) continue;
     nDev++; nSee+=pts.length; if(d.follower) nFol++;
     const col=COLOR[d.cat]||"#6f8586", sel=selected===d.key, dim=selected&&!sel;
+    const g = showLoc && d.geo && !d.attack ? (pts.length===d.pts.length ? d.geo : (isMoving(pts) ? null : locate(pts))) : null;
+    if(g){
+      // shaded "probably here" area; a single vantage point gets a dashed ring around where we stood instead
+      if(g.single){
+        const p0=pts[pts.length-1];
+        L.circle([p0.lat,p0.lng],{radius:g.r,color:col,weight:1.2,opacity:dim?.15:.6,dashArray:"5 6",fill:false,interactive:false}).addTo(layer);
+      } else {
+        L.circle([g.lat,g.lng],{radius:g.r,color:col,weight:1,opacity:dim?.15:.55,fillColor:col,fillOpacity:dim?.03:.12,interactive:false}).addTo(layer);
+        if(sel) pts.forEach(p=>L.polyline([[p.lat,p.lng],[g.lat,g.lng]],{color:col,weight:1,opacity:.45,dashArray:"2 4",interactive:false}).addTo(layer));
+      }
+      if(!g.single) L.marker([g.lat,g.lng],{icon:L.divIcon({className:"",iconSize:[14,14],iconAnchor:[7,7],
+          html:'<div style="width:10px;height:10px;margin:2px;transform:rotate(45deg);background:'+col+';border:2px solid #0b1113;opacity:'+(dim?.3:1)+'"></div>'})})
+        .bindPopup(pop(d,pts)).on("click",()=>select(d.key,false)).addTo(layer);
+      if(d.fixed){
+        if(g.single) L.circleMarker([pts[pts.length-1].lat,pts[pts.length-1].lng],{radius:sel?8:5,color:"#0b1113",weight:2,fillColor:col,fillOpacity:dim?.25:1})
+          .bindPopup(pop(d,pts)).on("click",()=>select(d.key,false)).addTo(layer);
+        bounds.push([g.lat,g.lng]);
+        continue;
+      }
+    }
     if(d.fixed){
       const s=weightedSpot(pts);
       L.circle([s.lat,s.lng],{radius:Math.min(s.spread,800),color:col,weight:1,opacity:dim?.15:.5,fillOpacity:dim?.02:.08,interactive:false}).addTo(layer);
@@ -506,7 +584,8 @@ function pop(d,pts,p){
   const base='<b>'+esc(label(d))+'</b><br><span style="color:'+(COLOR[d.cat]||"#999")+'">'+esc(d.cat)+'</span> · '+esc(d.kind)+
     (d.follower?' · <span style="color:#ff3b3b">POSSIBLE FOLLOWER</span>':'')+
     (d.repeat?' · <span style="color:#ff2a2a">REPEAT ×'+d.pts.length+'</span>':'')+'<br>'+
-    (d.target?'Hit: '+targetText(d)+'<br>':'');
+    (d.target?'Hit: '+targetText(d)+'<br>':'')+
+    (d.geo&&showLoc&&!d.attack?'Est. location: ±'+Math.round(d.geo.r)+' m <span style="color:var(--muted)">('+d.geo.conf+', '+d.geo.spots+' spot'+(d.geo.spots>1?'s':'')+(d.geo.oneLine?', one road: either side':'')+')</span><br>':'');
   if(p) return base+fmt(p.t)+(p.rssi!=null?' · '+p.rssi+' dBm':'')+(p.loc?'<br>'+esc(p.loc):'')+'<br>'+pts.length+' sightings here and elsewhere';
   return base+'Estimated from '+pts.length+' sightings<br>Last '+fmt(pts[pts.length-1].t);
 }
@@ -546,7 +625,9 @@ function detail(){
       (d.attack?'<dt>Encounters</dt><dd>'+d.pts.length+(d.repeat?' <span style="color:#ff2a2a">repeat attacker</span>':'')+'</dd>':'')+
       '<dt>Seen</dt><dd>'+d.pts.length+' times at '+d.places.length+' place'+(d.places.length===1?"":"s")+(d.far?', '+(d.far/1000).toFixed(1)+' km apart':'')+'</dd>'+
       '<dt>First</dt><dd>'+esc(fmt(d.first))+'</dd><dt>Last</dt><dd>'+esc(fmt(d.last))+'</dd>'+
-      (d.fixed?'<dt>Est. spot</dt><dd class="mono">'+d.spot.lat.toFixed(5)+', '+d.spot.lng.toFixed(5)+' ±'+Math.round(d.spot.spread)+' m</dd>':'')+
+      (d.geo?'<dt>Est. location</dt><dd class="mono">'+(d.geo.single?'within ~'+Math.round(d.geo.r)+' m of the sighting':d.geo.lat.toFixed(5)+', '+d.geo.lng.toFixed(5)+' ±'+Math.round(d.geo.r)+' m')+
+        ' <span style="color:var(--muted)">'+d.geo.conf+' · '+d.geo.spots+' vantage point'+(d.geo.spots>1?'s':'')+(d.geo.oneLine?' · all from one road, could be either side: a pass from another street will pin it':'')+'</span></dd>'
+       :(d.fixed?'<dt>Est. spot</dt><dd class="mono">'+d.spot.lat.toFixed(5)+', '+d.spot.lng.toFixed(5)+' ±'+Math.round(d.spot.spread)+' m</dd>':''))+
     '</dl>'+
     '<div class="row" style="margin-top:8px"><button type="button" id="focusBtn">Zoom to</button>'+
       '<button type="button" id="mineToggle">'+(d.mine?"Not mine":"Mark as mine")+'</button></div>'+
@@ -556,7 +637,7 @@ function detail(){
   $("mineToggle").onclick=()=>{ if(mine.has(d.key)) mine.delete(d.key); else mine.add(d.key); store.set("sm.mine",[...mine]); refresh(); };
 }
 function focus(d){
-  const b = d.fixed ? [[d.spot.lat,d.spot.lng]] : d.pts.map(p=>[p.lat,p.lng]);
+  const b = d.geo && !d.geo.single ? [[d.geo.lat,d.geo.lng], ...d.pts.map(p=>[p.lat,p.lng])] : d.fixed ? [[d.spot.lat,d.spot.lng]] : d.pts.map(p=>[p.lat,p.lng]);
   if(b.length===1) map.setView(b[0],16); else map.fitBounds(b,{padding:[40,40],maxZoom:16});
 }
 function select(k,zoom){
@@ -602,6 +683,7 @@ $("cats").addEventListener("click",e=>{ const b=e.target.closest("[data-c]"); if
 $("catAll").onclick=()=>{ catsOn=new Set(CATS.map(c=>c[0])); store.set("sm.cats",[...catsOn]); chips(); draw(); lists(); };
 $("catNone").onclick=()=>{ catsOn=new Set(); store.set("sm.cats",[]); chips(); draw(); lists(); };
 $("tracksBtn").onclick=e=>{ showTracks=!showTracks; e.currentTarget.classList.toggle("on",showTracks); e.currentTarget.setAttribute("aria-pressed",showTracks); draw(); };
+$("locBtn").onclick=e=>{ showLoc=!showLoc; e.currentTarget.classList.toggle("on",showLoc); e.currentTarget.setAttribute("aria-pressed",showLoc); draw(); };
 $("mineBtn").onclick=e=>{ showMine=!showMine; e.currentTarget.classList.toggle("on",showMine); e.currentTarget.setAttribute("aria-pressed",showMine); draw(); lists(); };
 ["atkList","folList","devList"].forEach(id=>$(id).addEventListener("click",e=>{ const li=e.target.closest("[data-k]"); if(li) select(li.dataset.k,true); }));
 $("detClose").onclick=()=>{ selected=null; draw(); lists(); detail(); };
