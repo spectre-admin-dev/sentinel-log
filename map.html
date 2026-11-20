@@ -95,6 +95,9 @@ select:focus,input:focus,button:focus-visible{outline:2px solid var(--accent);ou
 .leaflet-control-layers-toggle{filter:invert(.85)}
 .leaflet-control-layers-expanded{padding:8px 10px}
 .leaflet-control-attribution a{color:var(--muted)}
+.dfStat{background:var(--panel);color:var(--muted);border:1px solid var(--line);border-radius:2px;padding:4px 8px;font-family:var(--f-mono);font-size:.72rem;pointer-events:none}
+.dfStat.err{color:var(--crit)}
+.dfKey{display:inline-block;width:9px;height:9px;border-radius:50%;border:2px solid #fff;margin:0 4px 0 2px;vertical-align:-1px}
 @media (max-width:860px){
   .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto}
   .rail{position:fixed;left:0;right:0;bottom:0;max-height:62vh;grid-column:auto;grid-row:auto;border-left:none;border-top:1px solid var(--line);z-index:1000;transform:translateY(calc(100% - 0px));transition:transform .2s}
@@ -219,8 +222,115 @@ const BASES = {
 };
 let baseName = store.get("sm.base","Dark"); if(!BASES[baseName]) baseName="Dark";
 BASES[baseName].addTo(map);
-L.control.layers(BASES, null, { position:"topright", collapsed:true }).addTo(map);
 map.on("baselayerchange", e=>store.set("sm.base", e.name));
+
+// ---------- DeFlock overlay ----------
+// DeFlock (deflock.me) keeps every mapped ALPR in OpenStreetMap as a node tagged surveillance:type=ALPR.
+// We pull the same nodes from the public Overpass API for whatever area is on screen, in 1-degree cells,
+// cached for a day. Works over any basemap; drawn in its own pane, under your own detections.
+const deflock = (function(){
+  const ENDPOINTS=["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter"];
+  const MIN_ZOOM=8, CELL=1, TTL=24*3600e3, MAX_CELLS=12;
+  map.createPane("deflock"); map.getPane("deflock").style.zIndex=390;
+  const renderer=L.canvas({pane:"deflock"});
+  const group=L.layerGroup();
+  const cells=new Map();          // "lat,lng" -> {t, cams:[...]}
+  const drawn=new Set();          // OSM ids already on the map
+  let busy=false, again=false, active=false;
+  const FLOCK="#ff8a1f", OTHER="#ffd447";
+
+  const Stat=L.Control.extend({ onAdd(){ this.el=L.DomUtil.create("div","dfStat"); this.el.hidden=true; return this.el; } });
+  const stat=new Stat({position:"topright"}); let statOn=false;
+  function say(t,err){ if(!statOn){ stat.addTo(map); statOn=true; } stat.el.hidden=!t; stat.el.textContent=t||""; stat.el.classList.toggle("err",!!err); }
+
+  function cacheGet(k){ try{ const v=JSON.parse(localStorage.getItem("df."+k)); return v&&Date.now()-v.t<TTL?v:null; }catch(e){ return null; } }
+  function cachePut(k,v){
+    try{ localStorage.setItem("df."+k,JSON.stringify(v)); }
+    catch(e){ try{ Object.keys(localStorage).filter(x=>x.startsWith("df.")).forEach(x=>localStorage.removeItem(x)); localStorage.setItem("df."+k,JSON.stringify(v)); }catch(_){} }
+  }
+  function parseDir(v){
+    if(!v) return [];
+    const C={N:0,NNE:22.5,NE:45,ENE:67.5,E:90,ESE:112.5,SE:135,SSE:157.5,S:180,SSW:202.5,SW:225,WSW:247.5,W:270,WNW:292.5,NW:315,NNW:337.5};
+    return String(v).split(";").map(x=>x.trim().toUpperCase()).map(x=>x in C?C[x]:parseFloat(x)).filter(x=>!isNaN(x));
+  }
+  function parse(json){
+    return (json.elements||[]).filter(e=>e.type==="node").map(e=>{
+      const t=e.tags||{}, who=[t.manufacturer,t.brand,t.operator].join(" ").toLowerCase();
+      return { id:e.id, lat:e.lat, lng:e.lon, flock:who.includes("flock"),
+        make:t.manufacturer||t.brand||"", op:t.operator||"", dirs:parseDir(t["camera:direction"]||t.direction),
+        mount:t["camera:mount"]||"", zone:t["surveillance:zone"]||"" };
+    });
+  }
+  function beam(c,deg){
+    // ~120 m wedge, 50 degrees wide, pointing where the camera looks
+    const pts=[[c.lat,c.lng]], R=120/111320, k=Math.cos(c.lat*Math.PI/180);
+    for(let a=deg-25;a<=deg+25;a+=10){ const r=a*Math.PI/180; pts.push([c.lat+R*Math.cos(r), c.lng+R*Math.sin(r)/k]); }
+    return pts;
+  }
+  function add(cams){
+    for(const c of cams){
+      if(drawn.has(c.id)) continue; drawn.add(c.id);
+      const col=c.flock?FLOCK:OTHER;
+      c.dirs.forEach(d=>L.polygon(beam(c,d),{renderer,pane:"deflock",color:col,weight:1,opacity:.6,fillOpacity:.15,interactive:false}).addTo(group));
+      L.circleMarker([c.lat,c.lng],{renderer,pane:"deflock",radius:5,color:"#ffffff",weight:2,fillColor:col,fillOpacity:1})
+        .bindPopup('<b>'+(c.flock?"Flock ALPR":"ALPR")+'</b> <span style="color:var(--muted)">· DeFlock</span><br>'+
+          (c.make?esc(c.make)+'<br>':'')+(c.op?'Operator: '+esc(c.op)+'<br>':'')+
+          (c.dirs.length?'Facing: '+c.dirs.map(d=>Math.round(d)+"°").join(", ")+'<br>':'')+
+          (c.mount?'Mount: '+esc(c.mount)+'<br>':'')+
+          '<a href="https://www.openstreetmap.org/node/'+c.id+'" target="_blank" rel="noopener" style="color:var(--accent)">OSM node '+c.id+'</a>'+
+          ' · <a href="https://deflock.me/map" target="_blank" rel="noopener" style="color:var(--accent)">DeFlock</a>')
+        .addTo(group);
+    }
+  }
+  async function overpass(s,w,n,e){
+    const q='[out:json][timeout:60];node["surveillance:type"="ALPR"]('+s+','+w+','+n+','+e+');out body;';
+    let last;
+    for(const url of ENDPOINTS){
+      try{
+        const r=await fetch(url,{method:"POST",body:"data="+encodeURIComponent(q),headers:{"Content-Type":"application/x-www-form-urlencoded"}});
+        if(!r.ok) throw new Error("HTTP "+r.status);
+        return parse(await r.json());
+      }catch(err){ last=err; }
+    }
+    throw last;
+  }
+  function visibleCells(){
+    const b=map.getBounds(), out=[];
+    for(let la=Math.floor(b.getSouth()/CELL)*CELL; la<b.getNorth(); la+=CELL)
+      for(let ln=Math.floor(b.getWest()/CELL)*CELL; ln<b.getEast(); ln+=CELL) out.push([la,ln]);
+    return out;
+  }
+  async function update(){
+    if(!active) return;
+    if(map.getZoom()<MIN_ZOOM){ say("DeFlock: zoom in to load cameras"); return; }
+    if(busy){ again=true; return; }
+    const want=visibleCells().slice(0,MAX_CELLS), need=[];
+    for(const [la,ln] of want){
+      const k=la+","+ln; if(cells.has(k)) continue;
+      const c=cacheGet(k); if(c){ cells.set(k,c); add(c.cams); } else need.push([la,ln]);
+    }
+    if(!need.length){ say("DeFlock: "+drawn.size+" cameras"); return; }
+    busy=true; say("DeFlock: loading…");
+    try{
+      const s=Math.min(...need.map(c=>c[0])), w=Math.min(...need.map(c=>c[1]));
+      const n=Math.max(...need.map(c=>c[0]))+CELL, e=Math.max(...need.map(c=>c[1]))+CELL;
+      const cams=await overpass(s,w,n,e);
+      for(const [la,ln] of need){
+        const inCell=cams.filter(c=>c.lat>=la&&c.lat<la+CELL&&c.lng>=ln&&c.lng<ln+CELL);
+        const v={t:Date.now(),cams:inCell}; cells.set(la+","+ln,v); cachePut(la+","+ln,v);
+      }
+      add(cams); say("DeFlock: "+drawn.size+" cameras");
+    }catch(err){ say("DeFlock: couldn't load ("+err.message+"). Pan to retry.",true); }
+    busy=false; if(again){ again=false; update(); }
+  }
+  let t=null; map.on("moveend",()=>{ clearTimeout(t); t=setTimeout(update,400); });
+  group.on("add",()=>{ active=true; store.set("sm.deflock",true); update(); });
+  group.on("remove",()=>{ active=false; store.set("sm.deflock",false); say(""); });
+  return group;
+})();
+const OVERLAYS = { '<span class="dfKey" style="background:#ff8a1f"></span>DeFlock ALPRs': deflock };
+L.control.layers(BASES, OVERLAYS, { position:"topright", collapsed:true }).addTo(map);
+if(store.get("sm.deflock",false)) deflock.addTo(map);
 const layer = L.layerGroup().addTo(map);
 let fitted = false;
 
