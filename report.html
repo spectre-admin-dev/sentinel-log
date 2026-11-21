@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<title>Sentinel Report</title>
+<meta name="theme-color" content="#0e1517">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Screen: dark Sentinel controls on top, the report itself as a white "paper" sheet below.
+   Print: controls vanish, the sheet prints edge to edge in black on white. */
+:root{
+  --bg:#0e1517; --panel:#141d20; --panel-2:#1a2528; --line:#24474a; --line-soft:#1e3134;
+  --fg:#d9e4e2; --muted:#83999a; --accent:#ff8a1f; --accent-ink:#1a0d00; --crit:#ff3b3b; --ok:#4fd1a1;
+  --f-display:"Chakra Petch","Rajdhani","Segoe UI",sans-serif;
+  --f-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --ink:#11181a; --ink-2:#4a5759; --rule:#c9d2d3; --rule-soft:#e3e8e8; --red:#c8102e; --amber:#b45f00;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:14px;line-height:1.45}
+[hidden]{display:none!important}
+a{color:var(--accent)}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel)}
+.bar h1{font-family:var(--f-display);letter-spacing:.1em;text-transform:uppercase;font-size:1.05rem;margin:0}
+.bar nav{display:flex;gap:14px;font-size:.85rem}
+.ctl{display:flex;flex-wrap:wrap;align-items:end;gap:12px 16px;padding:14px 18px;border-bottom:1px solid var(--line-soft);background:var(--panel)}
+.ctl label{display:flex;flex-direction:column;gap:4px;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.ctl input,.ctl select{font:inherit;font-size:.9rem;color:var(--fg);background:var(--panel-2);border:1px solid var(--line-soft);border-radius:2px;padding:7px 9px;text-transform:none;letter-spacing:0}
+.ctl input[type=text]{width:230px}
+.ctl .chk{flex-direction:row;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:.85rem;color:var(--fg)}
+.presets{display:flex;gap:6px}
+button{font-family:var(--f-display);letter-spacing:.08em;text-transform:uppercase;font-size:.78rem;font-weight:600;cursor:pointer;border-radius:2px;padding:8px 12px;border:1px solid var(--line);background:transparent;color:var(--fg)}
+button.go{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.status{padding:8px 18px;font-family:var(--f-mono);font-size:.78rem;color:var(--muted)}
+.status.err{color:var(--crit)}
+
+/* ---------- the report sheet ---------- */
+.sheet{background:#fff;color:var(--ink);width:min(900px,calc(100% - 24px));margin:18px auto 60px;padding:44px 52px;box-shadow:0 2px 24px rgba(0,0,0,.45);font-size:12.5px}
+.sheet h2{font-family:var(--f-display);font-size:1.05rem;letter-spacing:.08em;text-transform:uppercase;margin:28px 0 8px;padding-bottom:4px;border-bottom:2px solid var(--ink);break-after:avoid}
+.sheet h3{font-size:.95rem;margin:16px 0 6px}
+.hd{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;border-bottom:3px solid var(--ink);padding-bottom:12px}
+.hd .mark{font-family:var(--f-display);font-weight:700;letter-spacing:.22em;font-size:.78rem;color:var(--ink-2)}
+.hd h1{font-family:var(--f-display);font-size:1.7rem;margin:2px 0 4px;letter-spacing:.03em;line-height:1.1}
+.hd .meta{font-family:var(--f-mono);font-size:.74rem;color:var(--ink-2);text-align:right;line-height:1.6;white-space:nowrap}
+.class{display:inline-block;margin-top:6px;font-family:var(--f-display);font-weight:700;letter-spacing:.18em;font-size:.7rem;border:1.5px solid var(--red);color:var(--red);padding:2px 8px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border:1px solid var(--rule);margin-top:16px}
+.tile{padding:10px 12px;border-right:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.tile:nth-child(4n){border-right:0}
+.tile:nth-last-child(-n+4){border-bottom:0}
+.tile b{display:block;font-family:var(--f-display);font-size:1.45rem;line-height:1.1;font-variant-numeric:tabular-nums}
+.tile span{font-size:.7rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2)}
+.tile.hot b{color:var(--red)}
+ul.find{margin:6px 0 0;padding-left:18px}
+ul.find li{margin:3px 0}
+ul.find li.hot::marker{color:var(--red)}
+.note{color:var(--ink-2);font-size:.82rem;margin:4px 0 8px}
+table{width:100%;border-collapse:collapse;margin:6px 0 4px;font-size:.82rem}
+th{text-align:left;font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-2);border-bottom:1.5px solid var(--ink);padding:5px 6px;white-space:nowrap}
+td{border-bottom:1px solid var(--rule-soft);padding:5px 6px;vertical-align:top}
+tr{break-inside:avoid}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:var(--f-mono);font-size:.76rem}
+.sw{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px;border:1px solid rgba(0,0,0,.25)}
+.tag{display:inline-block;font-size:.64rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;padding:0 5px;border:1px solid currentColor;border-radius:2px;margin-left:4px;vertical-align:1px}
+.tag.red{color:var(--red)} .tag.amb{color:var(--amber)} .tag.mute{color:var(--ink-2)}
+.empty{color:var(--ink-2);font-style:italic;padding:4px 0}
+#rmap{height:380px;border:1px solid var(--rule);margin-top:6px}
+.legend{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:.74rem;color:var(--ink-2);margin-top:6px}
+.bars{display:flex;align-items:flex-end;justify-content:space-between;gap:3px;height:90px;border-bottom:1px solid var(--ink);margin:8px 0 2px}
+.bars div{flex:1;max-width:34px;background:var(--ink);min-height:1px;position:relative}
+.bars div.a{background:var(--red)}
+.bars-x{display:flex;justify-content:space-between;font-family:var(--f-mono);font-size:.68rem;color:var(--ink-2)}
+.ft{margin-top:30px;padding-top:8px;border-top:1px solid var(--rule);font-size:.72rem;color:var(--ink-2);display:flex;justify-content:space-between;gap:12px}
+@media (max-width:700px){ .sheet{padding:22px 16px} .tiles{grid-template-columns:repeat(2,1fr)} .tile:nth-child(2n){border-right:0} .hd{flex-direction:column} .hd .meta{text-align:left} }
+@page{size:letter;margin:14mm 13mm}
+@media print{
+  html,body{background:#fff}
+  .bar,.ctl,.status{display:none!important}
+  .sheet{box-shadow:none;margin:0;padding:0;width:auto;font-size:10.5pt}
+  .sheet h2{break-after:avoid}
+  .sec{break-inside:auto}
+  #rmap{height:330px}
+  a{color:inherit;text-decoration:none}
+}
+</style>
+</head>
+<body>
+<header class="bar">
+  <h1>Sentinel Report</h1>
+  <nav><a href="index.html">Log</a><a href="map.html">Map</a></nav>
+</header>
+<div class="ctl" role="group" aria-label="Report settings">
+  <label>From <input type="date" id="dFrom"></label>
+  <label>To <input type="date" id="dTo"></label>
+  <div class="presets" aria-label="Quick ranges">
+    <button type="button" data-days="1">24 h</button><button type="button" data-days="7">7 d</button>
+    <button type="button" data-days="30">30 d</button><button type="button" data-days="0">All</button>
+  </div>
+  <label>Title <input type="text" id="tTitle" value="Findings Report"></label>
+  <label>Prepared by <input type="text" id="tBy" placeholder="name / company"></label>
+  <label>Marking <select id="tMark"><option>CONFIDENTIAL</option><option>INTERNAL</option><option value="">None</option></select></label>
+  <label class="chk"><input type="checkbox" id="oAll"> Full device list</label>
+  <label class="chk"><input type="checkbox" id="oMine"> Include "mine"</label>
+  <label class="chk"><input type="checkbox" id="oHidden"> Include hidden</label>
+  <button type="button" class="go" id="genBtn">Build report</button>
+  <button type="button" id="printBtn" disabled>Print / Save PDF</button>
+  <button type="button" id="csvBtn" disabled>Download CSV</button>
+</div>
+<div class="status" id="status" role="status">Pick a range and press Build report.</div>
+<main class="sheet" id="sheet" hidden></main>
+
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="gate.js"></script>
+<script>
+(function(){
+"use strict";
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const store = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } },
+                set(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} } };
+
+// ---- shared with map.html (same rules) ----
+const CATS = [
+  ["Flock","#ff8a1f"],["ALPR","#ffb21f"],["Axon","#ffd447"],["Police / fleet router","#ff5a5a"],
+  ["IP camera","#e36bff"],["Ring","#5fd0ff"],["Blink","#3fb6d9"],["AirTag","#c9d4d6"],["Tile","#9fe870"],
+  ["SmartTag","#7a9cff"],["Smart glasses","#ff7aa8"],["Drone","#b98cff"],["Skimmer","#ff4f8b"],
+  ["Flipper / hacking tool","#ff3d3d"],["Deauth attack","#ff2a2a"],["iBeacon","#64d6b8"],
+  ["Govee / smart home","#68e0a0"],["Hotspot","#8fb0b2"],["Unknown","#6f8586"]
+];
+const COLOR = Object.fromEntries(CATS);
+// Things bolted to a pole or a wall: estimated position, never "following" you.
+const FIXED = new Set(["Flock","ALPR","IP camera","Ring","Blink","Govee / smart home","Skimmer"]);
+// Attacks: always drawn on top, tracks always on, linked to their target and to earlier encounters.
+const ATTACK = new Set(["Deauth attack","Flipper / hacking tool"]);
+
+function parseTarget(note){
+  if(!note) return null;
+  let m=note.match(/target: (.*?) \(([0-9A-Fa-f:]{17})\)/);
+  if(m) return { name:m[1], mac:m[2].toUpperCase() };
+  m=note.match(/target BSSID \.\.:([0-9A-Fa-f]{6})/);
+  if(m){ const h=m[1].toUpperCase(); return { name:null, suffix:h.slice(0,2)+":"+h.slice(2,4)+":"+h.slice(4,6) }; }
+  return null;
+}
+
+function meters(a,b){
+  const R=6371000, toR=Math.PI/180, dLat=(b.lat-a.lat)*toR, dLng=(b.lng-a.lng)*toR;
+  const h=Math.sin(dLat/2)**2+Math.cos(a.lat*toR)*Math.cos(b.lat*toR)*Math.sin(dLng/2)**2;
+  return 2*R*Math.asin(Math.sqrt(h));
+}
+function clusterPlaces(pts, radius){
+  const places=[];
+  for(const p of pts){
+    let hit=null;
+    for(const c of places){ if(meters(c,p)<=radius){ hit=c; break; } }
+    if(hit){ hit.n++; hit.lat+=(p.lat-hit.lat)/hit.n; hit.lng+=(p.lng-hit.lng)/hit.n; hit.last=p.t; }
+    else places.push({lat:p.lat,lng:p.lng,n:1,first:p.t,last:p.t});
+  }
+  return places;
+}
+// ---------- WiFi geolocation ----------
+// Signal strength -> rough distance (log-distance path loss): -40 dBm ~ 1 m, n = 2.7 (suburban, through walls).
+const RSSI_1M = -40, PATH_N = 2.7, MOVING_M = 1500;
+function rssiMeters(rssi){ return Math.min(800, Math.max(3, 10 ** ((RSSI_1M - (rssi ?? -80)) / (10 * PATH_N)))); }
+// Where is the device itself? Trilateration: each sighting says "the device is about d meters from here"
+// (d from signal strength). Find the point that best fits all of those distances (weighted least squares,
+// strong close readings count most), tried from several starting points so it can't get stuck.
+// If every sighting lies along one straight road, the device could be on either side of it: the answer
+// stays on the road and the radius covers both sides, instead of pretending to know.
+function toXY(o,p){ const k=111320; return [(p.lng-o.lng)*k*Math.cos(o.lat*Math.PI/180), (p.lat-o.lat)*k]; }
+function toLL(o,x,y){ const k=111320; return { lat:o.lat+y/k, lng:o.lng+x/(k*Math.cos(o.lat*Math.PI/180)) }; }
+function locate(pts){
+  if(!pts.length) return null;
+  const o=pts[0], P=pts.map(p=>{ const [x,y]=toXY(o,p), d=rssiMeters(p.rssi); return {x,y,d,w:1/(d*d)}; });
+  let W=0, cx=0, cy=0; for(const q of P){ W+=q.w; cx+=q.x*q.w; cy+=q.y*q.w; } cx/=W; cy/=W;
+  const spots=clusterPlaces(pts, 25).length, best=Math.min(...P.map(q=>q.d));
+  // how "straight" are the vantage points? (weighted PCA: minor-axis spread)
+  let sxx=0, syy=0, sxy=0; for(const q of P){ const dx=q.x-cx, dy=q.y-cy; sxx+=q.w*dx*dx; syy+=q.w*dy*dy; sxy+=q.w*dx*dy; }
+  sxx/=W; syy/=W; sxy/=W;
+  const tr=sxx+syy, det=sxx*syy-sxy*sxy, minor=Math.sqrt(Math.max(0, tr/2-Math.sqrt(Math.max(0, tr*tr/4-det))));
+  const cost=(x,y)=>{ let c=0; for(const q of P){ const e=Math.hypot(x-q.x,y-q.y)-q.d; c+=q.w*e*e; } return c; };
+  function solve(x,y){
+    for(let it=0; it<60; it++){                                   // Gauss-Newton with step halving
+      let a11=0,a12=0,a22=0,b1=0,b2=0;
+      for(const q of P){ const r=Math.max(.5,Math.hypot(x-q.x,y-q.y)), ux=(x-q.x)/r, uy=(y-q.y)/r, e=r-q.d;
+        a11+=q.w*ux*ux; a12+=q.w*ux*uy; a22+=q.w*uy*uy; b1+=q.w*ux*e; b2+=q.w*uy*e; }
+      const D=a11*a22-a12*a12; if(Math.abs(D)<1e-12) break;
+      let dx=-( a22*b1-a12*b2)/D, dy=-(-a12*b1+a11*b2)/D, c0=cost(x,y), t=1;
+      while(t>1/64 && cost(x+dx*t,y+dy*t)>c0) t/=2;
+      x+=dx*t; y+=dy*t; if(Math.hypot(dx*t,dy*t)<.05) break;
+    }
+    return [x,y];
+  }
+  let bx=cx, by=cy, bc=cost(cx,cy);
+  if(spots>=3 && minor>=12){                                      // vantage points spread in 2-D: trilateration can resolve it
+    for(let k=0;k<8;k++){ const a=k*Math.PI/4, [x,y]=solve(cx+Math.cos(a)*best, cy+Math.sin(a)*best), c=cost(x,y); if(c<bc){ bc=c; bx=x; by=y; } }
+  }
+  const resid=Math.sqrt(bc/W);
+  let r, conf, oneLine=false;
+  if(spots===1){ r=Math.max(12, best*1.6); conf="rough"; }
+  else if(spots<3 || minor<12){                                   // one straight pass: on the road, either side
+    oneLine=true; r=Math.max(15, best*1.25+resid); conf=spots>=3?"fair":"rough";
+  } else {
+    r=Math.max(10, resid*1.6 + 6 + 40/Math.sqrt(spots)); conf=spots>=5&&minor>=25?"good":"fair";
+  }
+  r=Math.min(800,r);
+  const c=toLL(o,bx,by);
+  return { lat:c.lat, lng:c.lng, r, spots, n:pts.length, conf, single: spots===1, oneLine };
+}
+// WiFi seen across a wide area is moving (hotspot in a car, phone): no fixed spot to find.
+function isMoving(pts){
+  for(let i=1;i<pts.length;i++) if(meters(pts[0],pts[i])>MOVING_M) return true;
+  return false;
+}
+
+
+function keyOf(r){
+  if(r.random_mac && (r.name||r.vendor)) return "fp|"+r.category+"|"+(r.name||"")+"|"+(r.vendor||"");
+  return r.mac;
+}
+
+
+// ---------- groups ----------
+const SURV = new Set(["Flock","ALPR","Axon","Police / fleet router","IP camera","Drone","Skimmer"]);
+const TRACK = new Set(["AirTag","Tile","SmartTag"]);
+const HOMECAM = new Set(["Ring","Blink"]);
+const MOVING_CATS = new Set(["Axon","Police / fleet router","Drone"]);   // these can move: no "est. location"
+
+let sb=null, me="", rows=[], devices=[], built=null;
+
+function day(t){ const d=new Date(t); return d.toLocaleDateString(undefined,{month:"short",day:"numeric"}); }
+function when(t){ const d=new Date(t); return d.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})+" "+d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}); }
+function dur(ms){ const m=Math.round(ms/60000); if(m<60) return m+" min"; const h=m/60; if(h<48) return h.toFixed(h<10?1:0)+" h"; return Math.round(h/24)+" days"; }
+function km(m){ return m>=1000 ? (m/1000).toFixed(m>=10000?0:1)+" km" : Math.round(m)+" m"; }
+function label(d){
+  if(d.name) return d.name;
+  if(d.cat==="Deauth attack") return d.target&&(d.target.name||(d.targetDev&&d.targetDev.name)) ? "Deauth on "+(d.target.name||d.targetDev.name) : "Deauth flood";
+  return d.fuzzy||d.macs.size>1||[...d.macs].some(m=>/^.[26AE]/i.test(m)) ? d.cat+" (rotating MAC)" : [...d.macs][0];
+}
+function named(d){ const l=label(d); return l.startsWith(d.cat) ? esc(l) : esc(l)+' ('+esc(d.cat)+')'; }
+function sw(c){ return '<span class="sw" style="background:'+(COLOR[c]||"#888")+'"></span>'; }
+function topLocs(d,n){ const c=new Map(); for(const p of d.pts) if(p.loc) c.set(p.loc,(c.get(p.loc)||0)+1); return [...c.entries()].sort((a,b)=>b[1]-a[1]).slice(0,n).map(x=>x[0]); }
+function placeText(d){ const l=topLocs(d,3); return l.length ? l.map(esc).join("; ") : (d.places.length+" spot"+(d.places.length===1?"":"s")); }
+function geoText(g){
+  if(!g) return '<span class="tag mute">moving</span>';
+  if(g.single) return 'within ~'+Math.round(g.r)+' m of sighting';
+  return '<span class="mono">'+g.lat.toFixed(5)+', '+g.lng.toFixed(5)+'</span> ±'+Math.round(g.r)+' m'+(g.oneLine?' <span class="tag mute">one road</span>':'');
+}
+
+// ---------- range ----------
+function iso(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }   // local date, not UTC
+function setDays(n){
+  const to=new Date(); $("dTo").value=iso(to);
+  $("dFrom").value = n ? iso(new Date(Date.now()-(n-1)*86400e3)) : "";
+}
+function range(){
+  const f=$("dFrom").value, t=$("dTo").value;
+  return { from: f ? new Date(f+"T00:00:00") : null, to: t ? new Date(t+"T23:59:59.999") : null };
+}
+
+// ---------- load ----------
+async function load(){
+  const R=range(), out=[], page=1000;
+  status("Loading detections…");
+  for(let from=0; from<50000; from+=page){
+    let q=sb.from("sightings").select("ts,kind,mac,random_mac,name,category,confidence,rssi,vendor,source,location,lat,lng,notes,hidden")
+      .order("ts",{ascending:true}).range(from,from+page-1);
+    if(R.from) q=q.gte("ts",R.from.toISOString());
+    if(R.to) q=q.lte("ts",R.to.toISOString());
+    if(!$("oHidden").checked) q=q.eq("hidden",false);
+    const { data, error } = await q;
+    if(error){ status("Couldn't load: "+error.message,true); return false; }
+    out.push(...data); status("Loading detections… "+out.length);
+    if(data.length<page) break;
+  }
+  rows=out; return true;
+}
+
+// ---------- analysis (same rules as the map) ----------
+function analyse(){
+  const T={ places:+store.get("sm.tPlaces",3)||3, radius:+store.get("sm.tRadius",300)||300,
+            spread:(+store.get("sm.tSpread",1)||0)*1000, span:(+store.get("sm.tSpan",15)||0)*60000 };
+  const mine=new Set(store.get("sm.mine",[])), m=new Map();
+  for(const r of rows){
+    const k=keyOf(r); let d=m.get(k);
+    if(!d){ d={ key:k, fuzzy:k.startsWith("fp|"), macs:new Set(), cat:r.category, kind:r.kind, name:r.name, vendor:r.vendor, conf:r.confidence, all:[], pts:[], srcs:new Set() }; m.set(k,d); }
+    d.macs.add(r.mac); if(!d.name&&r.name) d.name=r.name; if(!d.vendor&&r.vendor) d.vendor=r.vendor;
+    if(r.confidence==="confirmed"||(r.confidence==="suspected"&&d.conf==="unverified")) d.conf=r.confidence;
+    const t=new Date(r.ts).getTime();
+    d.all.push({ t, rssi:r.rssi, loc:r.location });
+    if(r.source) d.srcs.add(r.source);
+    if(r.lat!=null&&r.lng!=null) d.pts.push({ lat:r.lat, lng:r.lng, t, rssi:r.rssi, loc:r.location });
+    if(ATTACK.has(r.category)){ const tg=parseTarget(r.notes); if(tg) d.target=tg; }
+  }
+  devices=[...m.values()].map(d=>{
+    d.all.sort((a,b)=>a.t-b.t); d.pts.sort((a,b)=>a.t-b.t);
+    d.first=d.all[0].t; d.last=d.all[d.all.length-1].t; d.n=d.all.length;
+    d.fixed=FIXED.has(d.cat); d.attack=ATTACK.has(d.cat);
+    d.places=d.pts.length?clusterPlaces(d.pts,T.radius):[];
+    let far=0; for(let i=0;i<d.places.length;i++) for(let j=i+1;j<d.places.length;j++) far=Math.max(far,meters(d.places[i],d.places[j]));
+    d.far=far; d.mine=mine.has(d.key);
+    d.follower = !d.fixed && !d.mine && d.places.length>=T.places && far>=T.spread && (d.last-d.first)>=T.span;
+    d.geo = d.pts.length && (d.kind==="WiFi"||d.fixed) && !MOVING_CATS.has(d.cat) && !isMoving(d.pts) ? locate(d.pts) : null;
+    if(d.attack && !d.target && d.cat==="Deauth attack"){ const mm=[...d.macs][0]||""; if(mm.startsWith("02:DE:A0:")) d.target={ name:null, suffix:mm.slice(9) }; }
+    // encounters: sightings more than 30 min apart count as separate occasions
+    let enc=0, lastT=-Infinity; for(const a of d.all){ if(a.t-lastT>30*60000) enc++; lastT=a.t; } d.enc=enc;
+    return d;
+  });
+  for(const d of devices) if(d.target) d.targetDev = devices.find(x=>x!==d && [...x.macs].some(mm=> d.target.mac ? mm===d.target.mac : mm.slice(9)===d.target.suffix)) || null;
+  if(!$("oMine").checked) devices=devices.filter(d=>!d.mine);
+  T.mine=mine.size; return T;
+}
+
+// ---------- render ----------
+function render(T){
+  const R=range(), all=devices, n=rows.length;
+  const atk=all.filter(d=>d.attack).sort((a,b)=>b.last-a.last);
+  const fol=all.filter(d=>d.follower).sort((a,b)=>b.far-a.far);
+  const trk=all.filter(d=>TRACK.has(d.cat)).sort((a,b)=>(b.follower-a.follower)||(b.places.length-a.places.length)||(b.n-a.n));
+  const sur=all.filter(d=>SURV.has(d.cat)).sort((a,b)=>a.cat.localeCompare(b.cat)||b.n-a.n);
+  const hom=all.filter(d=>HOMECAM.has(d.cat));
+  const span0 = n ? new Date(rows[0].ts).getTime() : (R.from?R.from.getTime():Date.now());
+  const span1 = n ? new Date(rows[n-1].ts).getTime() : (R.to?R.to.getTime():Date.now());
+  const days=new Set(rows.map(r=>new Date(r.ts).toDateString())).size;
+  const located=rows.filter(r=>r.lat!=null).length;
+  const srcs=new Set(rows.map(r=>r.source).filter(Boolean));
+  const rangeTxt=(R.from?R.from.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}):"Start of log")+" – "+(R.to?R.to.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}):"now");
+  const mark=$("tMark").value;
+
+  // key findings, plain language
+  const F=[];
+  if(atk.length){
+    const dea=atk.filter(d=>d.cat==="Deauth attack"), hk=atk.filter(d=>d.cat!=="Deauth attack");
+    if(dea.length) F.push(['hot',dea.length+' deauth attack'+(dea.length>1?'s':'')+' detected'+(dea.some(d=>d.target)?', targeting '+[...new Set(dea.filter(d=>d.target).map(d=>d.target.name||(d.targetDev&&d.targetDev.name)||"..:"+(d.target.suffix||d.target.mac.slice(9))))].slice(0,3).map(esc).join(", "):'')+'.']);
+    if(hk.length) F.push(['hot',hk.length+' hacking tool'+(hk.length>1?'s':'')+' (Flipper or similar) nearby'+(hk.some(d=>d.enc>1)?'; '+hk.filter(d=>d.enc>1).length+' seen on more than one occasion':'')+'.']);
+  }
+  if(fol.length) F.push(['hot',fol.length+' device'+(fol.length>1?'s':'')+' turned up at '+T.places+'+ separate places — possible follower'+(fol.length>1?'s':'')+'. Farthest: '+named(fol[0])+' across '+km(fol[0].far)+'.']);
+  const trkF=trk.filter(d=>!d.follower&&d.places.length>=2);
+  if(trkF.length) F.push(['',trkF.length+' tracker'+(trkF.length>1?'s':'')+' (AirTag / Tile / SmartTag) seen at more than one spot but below the follower threshold.']);
+  const flock=sur.filter(d=>d.cat==="Flock"||d.cat==="ALPR");
+  if(flock.length) F.push(['',flock.length+' Flock / license-plate camera'+(flock.length>1?'s':'')+' logged'+(flock.filter(d=>d.geo&&!d.geo.single).length?', '+flock.filter(d=>d.geo&&!d.geo.single).length+' with an estimated position':'')+'.']);
+  const pol=sur.filter(d=>d.cat==="Axon"||d.cat==="Police / fleet router");
+  if(pol.length) F.push(['',pol.length+' police / fleet device'+(pol.length>1?'s':'')+' (Axon, fleet routers) picked up.']);
+  const oth=sur.filter(d=>["IP camera","Drone","Skimmer"].includes(d.cat));
+  if(oth.length) F.push([oth.some(d=>d.cat==="Skimmer")?'hot':'',oth.map(d=>d.cat).filter((v,i,a)=>a.indexOf(v)===i).map(c=>oth.filter(d=>d.cat===c).length+' '+c.toLowerCase()+(oth.filter(d=>d.cat===c).length>1?'s':'')).join(', ')+' detected.']);
+  if(!F.length) F.push(['','No attacks, followers or surveillance gear in this period.']);
+
+  // per-day activity
+  const dayMap=new Map();
+  for(const r of rows){ const k=new Date(r.ts); k.setHours(0,0,0,0); const e=dayMap.get(+k)||{n:0,a:0}; e.n++; if(ATTACK.has(r.category)||SURV.has(r.category)) e.a++; dayMap.set(+k,e); }
+  const dKeys=[...dayMap.keys()].sort((a,b)=>a-b);
+  let bars="";
+  if(dKeys.length){
+    const all=[]; for(let t=dKeys[0]; t<=dKeys[dKeys.length-1]; t+=86400e3){ const k=new Date(t); k.setHours(0,0,0,0); all.push([+k, dayMap.get(+k)||{n:0,a:0}]); if(all.length>120) break; }
+    const mx=Math.max(...all.map(x=>x[1].n));
+    bars='<div class="bars" role="img" aria-label="Detections per day">'+all.map(([t,e])=>'<div title="'+esc(day(t))+': '+e.n+' detections, '+e.a+' attack/surveillance" style="height:'+Math.max(1,e.n/mx*100)+'%"></div>').join("")+'</div>'+
+      '<div class="bars-x"><span>'+esc(day(all[0][0]))+'</span><span>peak '+mx+'/day</span><span>'+esc(day(all[all.length-1][0]))+'</span></div>';
+  }
+  // locations
+  const locC=new Map(); for(const r of rows) if(r.location) locC.set(r.location,(locC.get(r.location)||0)+1);
+  const locTop=[...locC.entries()].sort((a,b)=>b[1]-a[1]).slice(0,10);
+  // categories
+  const catC=new Map(); for(const d of all) catC.set(d.cat,(catC.get(d.cat)||0)+1);
+
+  const tr=(cells)=>'<tr>'+cells.join("")+'</tr>';
+  const td=(h,c)=>'<td'+(c?' class="'+c+'"':'')+'>'+h+'</td>';
+  const none=t=>'<p class="empty">'+t+'</p>';
+
+  const html=[];
+  html.push('<header class="hd"><div><div class="mark">SENTINEL</div><h1>'+esc($("tTitle").value||"Findings Report")+'</h1>'+
+    '<div>'+esc(rangeTxt)+'</div>'+(mark?'<span class="class">'+esc(mark)+'</span>':'')+'</div>'+
+    '<div class="meta">Generated '+esc(when(Date.now()))+'<br>'+($("tBy").value?'Prepared by '+esc($("tBy").value)+'<br>':'')+'Account '+esc(me)+'<br>'+n+' detections · '+days+' day'+(days===1?'':'s')+'</div></header>');
+  html.push('<div class="tiles">'+[
+    [n,"Detections"],[all.length,"Unique devices"],[atk.length,"Attacks",atk.length],[fol.length,"Possible followers",fol.length],
+    [sur.length,"Surveillance devices"],[trk.length,"Trackers"],[located+" / "+n,"With GPS"],[srcs.size||"—","Scanners"]
+  ].map(([v,l,h])=>'<div class="tile'+(h?' hot':'')+'"><b>'+esc(v)+'</b><span>'+l+'</span></div>').join("")+'</div>');
+
+  html.push('<section class="sec"><h2>Key findings</h2><ul class="find">'+F.map(([c,t])=>'<li'+(c?' class="hot"':'')+'>'+t+'</li>').join("")+'</ul></section>');
+
+  html.push('<section class="sec"><h2>Map</h2><p class="note">Attacks in red, possible followers with their trail, surveillance gear at its estimated position (shaded = likely area).</p><div id="rmap"></div>'+
+    '<div class="legend">'+[["Deauth attack","Attack"],["Flock","Flock / ALPR"],["Axon","Police / fleet"],["IP camera","Camera"],["AirTag","Tracker"],["Police / fleet router","Follower trail"]].map(([c,l])=>'<span>'+sw(c)+esc(l)+'</span>').join("")+'</div></section>');
+
+  html.push('<section class="sec"><h2>Attacks</h2>'+(atk.length?'<table><thead><tr><th>Device</th><th>Type</th><th>Target</th><th class="n">Seen</th><th>First</th><th>Last</th><th>Where</th></tr></thead><tbody>'+
+    atk.map(d=>tr([td(sw(d.cat)+esc(label(d))+(d.enc>1?'<span class="tag red">repeat ×'+d.enc+'</span>':'')),td(esc(d.cat)),
+      td(d.target?esc(d.target.name||(d.targetDev&&d.targetDev.name)||"")+' <span class="mono">'+esc(d.target.mac||"..:"+d.target.suffix)+'</span>':'—'),
+      td(d.n,"n"),td(esc(when(d.first))),td(esc(when(d.last))),td(placeText(d))])).join("")+'</tbody></table>'
+    :none("No deauth attacks or hacking tools detected.")) +'</section>');
+
+  html.push('<section class="sec"><h2>Possible followers</h2><p class="note">Non-fixed devices seen at '+T.places+'+ places at least '+km(T.spread)+' apart over '+dur(T.span)+' or more (the map\'s current Tuning settings). Devices you marked as yours are '+($("oMine").checked?'included':'left out')+'.</p>'+
+    (fol.length?'<table><thead><tr><th>Device</th><th>Type</th><th class="n">Places</th><th class="n">Spread</th><th class="n">Over</th><th>First</th><th>Last</th><th>Where</th></tr></thead><tbody>'+
+    fol.map(d=>tr([td(sw(d.cat)+esc(label(d))+(d.fuzzy?'<span class="tag mute">rotating MAC</span>':'')),td(esc(d.cat)),td(d.places.length,"n"),td(km(d.far),"n"),td(dur(d.last-d.first),"n"),td(esc(when(d.first))),td(esc(when(d.last))),td(placeText(d))])).join("")+'</tbody></table>'
+    :none("Nothing met the follower threshold."))+'</section>');
+
+  html.push('<section class="sec"><h2>Trackers</h2>'+(trk.length?'<table><thead><tr><th>Device</th><th>Type</th><th class="n">Seen</th><th class="n">Places</th><th class="n">Spread</th><th>First</th><th>Last</th><th>Status</th></tr></thead><tbody>'+
+    trk.map(d=>tr([td(sw(d.cat)+esc(label(d))),td(esc(d.cat)),td(d.n,"n"),td(d.places.length||"—","n"),td(d.far?km(d.far):"—","n"),td(esc(when(d.first))),td(esc(when(d.last))),
+      td(d.follower?'<span class="tag red">possible follower</span>':d.places.length>=2?'<span class="tag amb">moved with you</span>':'<span class="tag mute">one place</span>')])).join("")+'</tbody></table>'
+    :none("No AirTags, Tiles or SmartTags detected."))+'</section>');
+
+  html.push('<section class="sec"><h2>Surveillance infrastructure</h2><p class="note">Positions are estimates from signal strength (see method below). "One road" means every sighting came from the same street, so the device could be on either side of it.</p>'+
+    (sur.length?'<table><thead><tr><th>Device</th><th>Type</th><th>Confidence</th><th class="n">Seen</th><th>Est. position</th><th>Last</th><th>Where</th></tr></thead><tbody>'+
+    sur.map(d=>tr([td(sw(d.cat)+esc(label(d))),td(esc(d.cat)),td(esc(d.conf)),td(d.n,"n"),td(d.pts.length?geoText(d.geo):'<span class="tag mute">no GPS</span>'),td(esc(when(d.last))),td(placeText(d))])).join("")+'</tbody></table>'
+    :none("No Flock, ALPR, police / fleet, camera, drone or skimmer devices."))+
+    (hom.length?'<p class="note">Also logged: '+hom.length+' home security camera'+(hom.length>1?'s':'')+' (Ring / Blink), not listed individually.</p>':'')+'</section>');
+
+  html.push('<section class="sec"><h2>Activity</h2>'+(bars||none("No detections."))+
+    '<h3>By category</h3><table><thead><tr><th>Category</th><th class="n">Devices</th></tr></thead><tbody>'+
+    [...catC.entries()].sort((a,b)=>b[1]-a[1]).map(([c,v])=>tr([td(sw(c)+esc(c)),td(v,"n")])).join("")+'</tbody></table>'+
+    (locTop.length?'<h3>Busiest locations</h3><table><thead><tr><th>Location</th><th class="n">Detections</th></tr></thead><tbody>'+locTop.map(([l,v])=>tr([td(esc(l)),td(v,"n")])).join("")+'</tbody></table>':'')+'</section>');
+
+  if($("oAll").checked){
+    const list=[...all].sort((a,b)=>a.cat.localeCompare(b.cat)||b.n-a.n);
+    html.push('<section class="sec"><h2>Appendix: all devices</h2><table><thead><tr><th>Device</th><th>MAC</th><th>Type</th><th>Kind</th><th class="n">Seen</th><th>First</th><th>Last</th></tr></thead><tbody>'+
+      list.map(d=>tr([td(esc(d.name||"—")),td('<span class="mono">'+esc([...d.macs][0])+(d.macs.size>1?' +'+(d.macs.size-1):'')+'</span>'),td(esc(d.cat)),td(esc(d.kind)),td(d.n,"n"),td(esc(when(d.first))),td(esc(when(d.last)))])).join("")+'</tbody></table></section>');
+  }
+
+  html.push('<section class="sec"><h2>Method &amp; limits</h2><p class="note">Detections are passive WiFi / Bluetooth observations from Sentinel scanners ('+(srcs.size?[...srcs].map(esc).join(", "):"no source recorded")+'). Device types come from names, vendor prefixes and radio fingerprints and can be wrong; confidence reflects what was recorded at the time. Positions are the scanner\'s GPS at each sighting; device positions are trilaterated from signal strength and typically good to tens of meters, wider when every sighting came from one road. Devices using rotating (randomized) addresses are grouped by name and type, so two similar devices can merge. "Possible follower" is a pattern, not proof: check each against your own movements.</p></section>');
+  html.push('<div class="ft"><span>Sentinel · '+esc(rangeTxt)+'</span><span>Generated '+esc(when(Date.now()))+'</span></div>');
+  $("sheet").innerHTML=html.join(""); $("sheet").hidden=false;
+  drawMap(atk,fol,sur,trk);
+  built={atk,fol,sur,trk,all};
+}
+
+let rmap=null;
+function drawMap(atk,fol,sur,trk){
+  if(rmap){ rmap.remove(); rmap=null; }
+  const el=$("rmap"); if(!el) return;
+  const pts=[];
+  rmap=L.map(el,{zoomControl:false,attributionControl:true,preferCanvas:false});
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png",{subdomains:"abcd",maxZoom:19,crossOrigin:true,
+    attribution:'&copy; OpenStreetMap &copy; CARTO'}).addTo(rmap);
+  for(const d of sur){
+    const g=d.geo, col=COLOR[d.cat]||"#888";
+    if(g&&!g.single){ L.circle([g.lat,g.lng],{radius:g.r,color:col,weight:1,fillOpacity:.15}).addTo(rmap); L.circleMarker([g.lat,g.lng],{radius:5,color:"#111",weight:1.5,fillColor:col,fillOpacity:1}).bindTooltip(label(d)).addTo(rmap); pts.push([g.lat,g.lng]); }
+    else if(d.pts.length){ const p=d.pts[d.pts.length-1]; L.circleMarker([p.lat,p.lng],{radius:5,color:"#111",weight:1.5,fillColor:col,fillOpacity:1}).bindTooltip(label(d)).addTo(rmap); pts.push([p.lat,p.lng]); }
+  }
+  for(const d of [...trk.filter(x=>!x.follower)]){ for(const p of d.pts){ L.circleMarker([p.lat,p.lng],{radius:3,color:COLOR[d.cat]||"#888",weight:1,fillOpacity:.7}).addTo(rmap); pts.push([p.lat,p.lng]); } }
+  for(const d of fol){
+    const ll=d.pts.map(p=>[p.lat,p.lng]);
+    L.polyline(ll,{color:"#c8102e",weight:3,opacity:.85}).addTo(rmap);
+    d.pts.forEach((p,i)=>L.circleMarker([p.lat,p.lng],{radius:i===d.pts.length-1?6:3.5,color:"#c8102e",weight:1.5,fillColor:COLOR[d.cat]||"#c8102e",fillOpacity:1}).addTo(rmap));
+    pts.push(...ll);
+  }
+  for(const d of atk){
+    for(const p of d.pts){ L.circleMarker([p.lat,p.lng],{radius:7,color:"#c8102e",weight:2.5,fillColor:"#ff2a2a",fillOpacity:.9}).bindTooltip(label(d)).addTo(rmap); pts.push([p.lat,p.lng]); }
+    if(d.targetDev&&d.pts.length&&d.targetDev.pts.length){ const a=d.pts[d.pts.length-1], t=d.targetDev.geo&&!d.targetDev.geo.single?d.targetDev.geo:d.targetDev.pts[d.targetDev.pts.length-1];
+      L.polyline([[a.lat,a.lng],[t.lat,t.lng]],{color:"#c8102e",weight:2,dashArray:"6 5"}).addTo(rmap); }
+  }
+  if(pts.length){ rmap.fitBounds(pts,{padding:[24,24],maxZoom:16}); }
+  else { el.outerHTML='<p class="empty">No findings with GPS to map in this period.</p>'; rmap.remove(); rmap=null; }
+}
+
+// ---------- CSV ----------
+function csv(){
+  if(!built) return;
+  const q=v=>{ const s=String(v??""); return /[",\n]/.test(s)?'"'+s.replace(/"/g,'""')+'"':s; };
+  const head=["section","name","mac","category","kind","confidence","detections","encounters","places","spread_m","first_seen","last_seen","est_lat","est_lng","est_radius_m","target","locations"];
+  const sect=d=>d.attack?"attack":d.follower?"follower":TRACK.has(d.cat)?"tracker":SURV.has(d.cat)?"surveillance":"other";
+  const lines=[head.join(",")];
+  for(const d of [...built.all].sort((a,b)=>sect(a).localeCompare(sect(b)))){
+    const g=d.geo&&!d.geo.single?d.geo:null;
+    lines.push([sect(d),d.name||"",[...d.macs].join(" "),d.cat,d.kind,d.conf,d.n,d.enc,d.places.length,Math.round(d.far),new Date(d.first).toISOString(),new Date(d.last).toISOString(),
+      g?g.lat.toFixed(6):"",g?g.lng.toFixed(6):"",g?Math.round(g.r):"",d.target?(d.target.name||"")+" "+(d.target.mac||"..:"+d.target.suffix):"",topLocs(d,5).join("; ")].map(q).join(","));
+  }
+  const blob=new Blob([lines.join("\n")],{type:"text/csv"}), a=document.createElement("a");
+  a.href=URL.createObjectURL(blob); a.download="sentinel-report-"+($("dFrom").value||"start")+"-to-"+($("dTo").value||"now")+".csv";
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+
+function status(t,err){ const s=$("status"); s.textContent=t; s.classList.toggle("err",!!err); }
+
+async function generate(){
+  $("genBtn").disabled=true;
+  try{
+    if(!(await load())) return;
+    const T=analyse();
+    render(T);
+    status(rows.length+" detections, "+devices.length+" devices. Print / Save PDF when it looks right."+(rows.length>=50000?" (capped at 50,000: narrow the range)":""));
+    $("printBtn").disabled=false; $("csvBtn").disabled=false;
+    store.set("rp.title",$("tTitle").value); store.set("rp.by",$("tBy").value); store.set("rp.mark",$("tMark").value);
+  } finally { $("genBtn").disabled=false; }
+}
+
+// ---------- wire up ----------
+setDays(7);
+$("tTitle").value=store.get("rp.title",$("tTitle").value); $("tBy").value=store.get("rp.by",""); $("tMark").value=store.get("rp.mark","CONFIDENTIAL");
+document.querySelectorAll("[data-days]").forEach(b=>b.onclick=()=>setDays(+b.dataset.days));
+$("genBtn").onclick=generate;
+$("printBtn").onclick=()=>{ if(rmap) rmap.invalidateSize(); setTimeout(()=>window.print(),300); };
+$("csvBtn").onclick=csv;
+window.addEventListener("beforeprint",()=>{ if(rmap) rmap.invalidateSize(); });
+
+SentinelGate.start().then(ctx=>{ sb=ctx.sb; me=ctx.email||""; status("Signed in. Pick a range and press Build report."); });
+})();
+</script>
+</body>
+</html>
