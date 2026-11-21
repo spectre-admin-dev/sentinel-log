@@ -206,3 +206,44 @@ create policy "members add live_location" on public.live_location
   for insert to authenticated with check (public.can_upload());
 create policy "members update live_location" on public.live_location
   for update to authenticated using (public.can_upload()) with check (public.can_upload());
+
+-- ---------- Phone breadcrumb trail (2026-11-21) ----------
+-- The iPhone beacon saves a point every ~10 s / 30 m while tracking. Detections that were made with no
+-- position (CYD on battery alone, Tab offline) get their spot filled in later by matching their time
+-- against this trail. Points older than 90 days are pruned automatically.
+create table if not exists public.location_track (
+  id          bigint generated always as identity primary key,
+  device      text not null default 'beacon' check (char_length(device) <= 32),
+  ts          timestamptz not null default now(),
+  lat         double precision not null check (lat between -90 and 90),
+  lng         double precision not null check (lng between -180 and 180),
+  accuracy_m  real check (accuracy_m >= 0),
+  speed_mps   real check (speed_mps >= 0),
+  uploaded_by uuid references auth.users(id) on delete set null
+);
+create index if not exists location_track_ts on public.location_track (ts);
+alter table public.location_track enable row level security;
+
+create or replace function public.location_track_before_insert()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  new.uploaded_by := auth.uid();
+  -- the phone sends the GPS fix time (it may upload late after a dead zone); never accept the future
+  if new.ts is null or new.ts > now() + interval '5 minutes' then new.ts := now(); end if;
+  if random() < 0.002 then delete from public.location_track where ts < now() - interval '90 days'; end if;
+  return new;
+end;
+$$;
+drop trigger if exists location_track_before_insert on public.location_track;
+create trigger location_track_before_insert before insert on public.location_track
+  for each row execute function public.location_track_before_insert();
+
+revoke all on public.location_track from anon, public;
+grant select, insert on public.location_track to authenticated;
+
+drop policy if exists "members read location_track" on public.location_track;
+drop policy if exists "members add location_track"  on public.location_track;
+create policy "members read location_track" on public.location_track
+  for select to authenticated using (public.can_upload() or public.can_read());
+create policy "members add location_track" on public.location_track
+  for insert to authenticated with check (public.can_upload());

@@ -64,6 +64,7 @@ button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg)
         <dt>Accuracy</dt><dd id="acc">—</dd>
         <dt>Last fix</dt><dd id="fix">—</dd>
         <dt>Last upload</dt><dd id="up">—</dd>
+        <dt>Trail</dt><dd id="trailStat">—</dd>
         <dt>Account</dt><dd id="who">—</dd>
       </dl>
       <div class="msg" id="liveMsg" role="status"></div>
@@ -92,6 +93,37 @@ button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg)
   let watchId=null, lastSent=0, wakeLock=null, lastPos=null;
   const MIN_INTERVAL=4000;   // at most one upload every 4 s
   const MOVE_MIN=4;          // or sooner if moved >4 m
+  // Breadcrumb trail: a point every 10 s or 30 m, kept on the phone until it uploads (dead zones are fine),
+  // so detections made with no position (CYD on battery, Tab offline) can be placed later by their time.
+  const TRAIL_EVERY=10000, TRAIL_MOVE=30, TRAIL_FLUSH=15000, TRAIL_MAX=20000;
+  let trailBuf=[], trailLastT=0, trailLastPos=null, trailFlushing=false, trailSent=0;
+  try{ trailBuf=JSON.parse(localStorage.getItem("bc.trail")||"[]"); }catch(e){ trailBuf=[]; }
+  function trailSave(){ try{ localStorage.setItem("bc.trail",JSON.stringify(trailBuf)); }catch(e){ trailBuf=trailBuf.slice(-5000); } }
+  function trailAdd(p){
+    const t=p.timestamp||Date.now(), pos={lat:p.coords.latitude,lng:p.coords.longitude};
+    const moved=trailLastPos?meters(trailLastPos,pos):Infinity;
+    if(t-trailLastT<TRAIL_EVERY && moved<TRAIL_MOVE) return;
+    if(t-trailLastT<3000) return;
+    trailLastT=t; trailLastPos=pos;
+    const o={ device:"beacon", ts:new Date(t).toISOString(), lat:pos.lat, lng:pos.lng, accuracy_m:Math.round(p.coords.accuracy||0) };
+    if(p.coords.speed!=null && p.coords.speed>=0) o.speed_mps=Math.round(p.coords.speed*10)/10;
+    trailBuf.push(o); if(trailBuf.length>TRAIL_MAX) trailBuf.splice(0,trailBuf.length-TRAIL_MAX);
+    trailSave(); trailStat();
+  }
+  async function trailFlush(){
+    if(trailFlushing||!trailBuf.length||!sb) return;
+    trailFlushing=true;
+    try{
+      const batch=trailBuf.slice(0,200);
+      const { error } = await sb.from("location_track").insert(batch);
+      if(!error){ trailBuf.splice(0,batch.length); trailSent+=batch.length; trailSave(); }
+      else if(/relation .*location_track|does not exist|schema cache/i.test(error.message)) msg("liveMsg","Trail table missing: run the location_track SQL in Supabase.",true);
+    }catch(e){}
+    trailFlushing=false; trailStat();
+  }
+  function trailStat(){ const el=$("trailStat"); if(el) el.textContent=trailSent+" sent"+(trailBuf.length?" · "+trailBuf.length+" waiting":""); }
+  setInterval(trailFlush, TRAIL_FLUSH);
+  window.addEventListener("online", trailFlush);
 
   function meters(a,b){ const R=6371000,toR=Math.PI/180,dLat=(b.lat-a.lat)*toR,dLng=(b.lng-a.lng)*toR;
     const h=Math.sin(dLat/2)**2+Math.cos(a.lat*toR)*Math.cos(b.lat*toR)*Math.sin(dLng/2)**2; return 2*R*Math.asin(Math.sqrt(h)); }
@@ -129,6 +161,7 @@ button.ghost{background:transparent;border:1px solid var(--line);color:var(--fg)
   function onPos(p){
     const lat=p.coords.latitude, lng=p.coords.longitude, acc=p.coords.accuracy;
     $("coords").textContent=lat.toFixed(5)+", "+lng.toFixed(5);
+    trailAdd(p);
     $("acc").textContent="±"+Math.round(acc)+" m";
     $("fix").textContent=new Date().toLocaleTimeString();
     setState("Tracking","on");
